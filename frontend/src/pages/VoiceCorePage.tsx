@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Mic,
-  MicOff,
   Radio,
   Zap,
   Shield,
@@ -13,12 +12,11 @@ import {
   AlertTriangle,
   XCircle,
   CheckCircle2,
-  Volume2,
   Clock,
   FlaskConical,
-  Sparkles,
   Info,
   GitBranch,
+  Check,
 } from 'lucide-react';
 import { audioManager } from '../audio/audioManager';
 import { VoiceState, SystemMetrics, RimeProviderConfig, IncidentRecord, VoiceEvent } from '../types';
@@ -41,6 +39,8 @@ interface VoiceCorePageProps {
   onSelectIncident: (inc: IncidentRecord) => void;
   onOpenChaosLab: () => void;
   onSendQuery?: (text: string) => Promise<void>;
+  selectedVoice?: string;
+  onSelectVoice?: (voice: string) => void;
 }
 
 export const VoiceCorePage: React.FC<VoiceCorePageProps> = ({
@@ -61,12 +61,22 @@ export const VoiceCorePage: React.FC<VoiceCorePageProps> = ({
   onSelectIncident,
   onOpenChaosLab,
   onSendQuery,
+  selectedVoice = 'rime-tts-mist-v3',
+  onSelectVoice,
 }) => {
   const [activeBottomTab, setActiveBottomTab] = useState<'timeline' | 'waveform' | 'flow'>('timeline');
-  const [selectedVoice, setSelectedVoice] = useState<string>('rime-tts-mist-v3');
-  const [transcriptInput, setTranscriptInput] = useState<string>('');
+  const [isVoiceDropdownOpen, setIsVoiceDropdownOpen] = useState<boolean>(false);
+  const [currentVoice, setCurrentVoice] = useState<string>(selectedVoice);
   const [listeningStatusText, setListeningStatusText] = useState<string>('Listening...');
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const secondaryCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  const availableVoices = [
+    { id: 'rime-tts-mist-v3', label: 'rime-tts-mist-v3', desc: 'Rime Mist V3 (Fast Streaming)' },
+    { id: 'rime-tts-coda', label: 'rime-tts-coda', desc: 'Rime Coda (High Fidelity)' },
+    { id: 'rime-tts-celeste', label: 'rime-tts-celeste', desc: 'Rime Celeste (Conversational)' },
+    { id: 'gemini-3.6-flash', label: 'gemini-3.6-flash', desc: 'Google Gemini 3.6 Flash Voice' },
+  ];
 
   // Derive simple numeric generation e.g. "GEN-014" -> "14" or "1"
   const numericGen = generationId.replace('GEN-0', '').replace('GEN-', '') || '1';
@@ -123,6 +133,50 @@ export const VoiceCorePage: React.FC<VoiceCorePageProps> = ({
     return () => cancelAnimationFrame(animId);
   }, [state]);
 
+  // Waveform tab oscilloscope loop
+  useEffect(() => {
+    if (activeBottomTab !== 'waveform') return;
+    let animId: number;
+    const canvas = secondaryCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const render = () => {
+      const { data } = audioManager.getWaveformData(state, 128);
+      const width = canvas.width;
+      const height = canvas.height;
+      ctx.clearRect(0, 0, width, height);
+
+      ctx.beginPath();
+      ctx.strokeStyle = '#00f0ff';
+      ctx.lineWidth = 2;
+      ctx.shadowBlur = 8;
+      ctx.shadowColor = '#00f0ff';
+
+      const sliceWidth = width / data.length;
+      let x = 0;
+
+      for (let i = 0; i < data.length; i++) {
+        const v = data[i];
+        const y = height / 2 + (v * height) / 2 * Math.sin(i * 0.2);
+
+        if (i === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+        x += sliceWidth;
+      }
+
+      ctx.stroke();
+      animId = requestAnimationFrame(render);
+    };
+
+    animId = requestAnimationFrame(render);
+    return () => cancelAnimationFrame(animId);
+  }, [activeBottomTab, state]);
+
   // Update status message
   useEffect(() => {
     if (state === 'SPEAKING') {
@@ -150,16 +204,13 @@ export const VoiceCorePage: React.FC<VoiceCorePageProps> = ({
     }
   };
 
-  const handleManualSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!transcriptInput.trim()) return;
-    if (onSendQuery) {
-      onSendQuery(transcriptInput.trim());
-      setTranscriptInput('');
-    }
+  const handleSelectVoiceOption = (voiceId: string) => {
+    setCurrentVoice(voiceId);
+    setIsVoiceDropdownOpen(false);
+    if (onSelectVoice) onSelectVoice(voiceId);
   };
 
-  // Curated timeline events matching reference image if runtime events not yet recorded
+  // Curated timeline events matching reference image
   const defaultTimelineEvents = [
     {
       time: '12:42:31',
@@ -333,27 +384,10 @@ export const VoiceCorePage: React.FC<VoiceCorePageProps> = ({
             >
               <Mic className="w-5 h-5 text-white" />
             </button>
-
-            {/* Quick interactive text prompt bar for convenience */}
-            <form onSubmit={handleManualSubmit} className="w-full max-w-md mt-4 flex items-center gap-2">
-              <input
-                type="text"
-                value={transcriptInput}
-                onChange={(e) => setTranscriptInput(e.target.value)}
-                placeholder="Or type a command (e.g. 'Check status', 'Stop immediately')..."
-                className="flex-1 px-3 py-1.5 rounded-lg bg-[#060a14] border border-white/[0.08] text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400"
-              />
-              <button
-                type="submit"
-                className="px-3 py-1.5 rounded-lg bg-[#1b4396] text-white text-xs font-semibold cursor-pointer"
-              >
-                Send
-              </button>
-            </form>
           </div>
 
           {/* Right Column: 5 Compact Telemetry Tiles (Exact match with reference image) */}
-          <div className="w-full lg:w-64 flex flex-col gap-2 shrink-0">
+          <div className="w-full lg:w-64 flex flex-col gap-2 shrink-0 relative">
             {/* 1. Current Generation */}
             <div className="p-3 rounded-xl bg-[#0d162b] border border-white/[0.06] flex items-center gap-3">
               <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center shrink-0">
@@ -407,18 +441,44 @@ export const VoiceCorePage: React.FC<VoiceCorePageProps> = ({
               </div>
             </div>
 
-            {/* 5. Voice Selector Dropdown */}
-            <div className="p-3 rounded-xl bg-[#0d162b] border border-white/[0.06] flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/30 flex items-center justify-center shrink-0">
-                  <Radio className="w-4 h-4 text-blue-400" />
+            {/* 5. Voice Selector Dropdown (Interactive Menu) */}
+            <div className="relative">
+              <button
+                onClick={() => setIsVoiceDropdownOpen(!isVoiceDropdownOpen)}
+                className="w-full p-3 rounded-xl bg-[#0d162b] hover:bg-[#131f3d] border border-white/[0.06] flex items-center justify-between text-left transition-colors cursor-pointer"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/30 flex items-center justify-center shrink-0">
+                    <Radio className="w-4 h-4 text-blue-400" />
+                  </div>
+                  <div>
+                    <div className="text-[10px] text-slate-400 font-medium">Voice</div>
+                    <div className="text-xs font-semibold text-white mt-0.5 truncate max-w-[130px]">
+                      {currentVoice}
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <div className="text-[10px] text-slate-400 font-medium">Voice</div>
-                  <div className="text-xs font-semibold text-white mt-0.5">{selectedVoice}</div>
+                <ChevronDown className="w-4 h-4 text-slate-400" />
+              </button>
+
+              {/* Dropdown Options */}
+              {isVoiceDropdownOpen && (
+                <div className="absolute bottom-full mb-1 left-0 right-0 bg-[#0a1224] border border-cyan-500/30 rounded-xl shadow-2xl p-1 z-30 space-y-0.5">
+                  {availableVoices.map((v) => (
+                    <button
+                      key={v.id}
+                      onClick={() => handleSelectVoiceOption(v.id)}
+                      className="w-full text-left px-3 py-2 rounded-lg hover:bg-white/[0.06] flex items-center justify-between text-xs text-white cursor-pointer"
+                    >
+                      <div>
+                        <div className="font-semibold text-xs text-slate-100">{v.label}</div>
+                        <div className="text-[10px] text-slate-400">{v.desc}</div>
+                      </div>
+                      {currentVoice === v.id && <Check className="w-4 h-4 text-cyan-400" />}
+                    </button>
+                  ))}
                 </div>
-              </div>
-              <ChevronDown className="w-4 h-4 text-slate-400" />
+              )}
             </div>
           </div>
         </div>
@@ -464,41 +524,87 @@ export const VoiceCorePage: React.FC<VoiceCorePageProps> = ({
             </button>
           </div>
 
-          {/* Timeline Rows (Exact match with reference image table) */}
-          <div className="divide-y divide-white/[0.04]">
-            {defaultTimelineEvents.map((evt, idx) => {
-              const Icon = evt.icon;
-              return (
-                <div
-                  key={idx}
-                  className="py-2.5 flex items-center justify-between text-xs font-sans hover:bg-white/[0.02] px-2 rounded-lg transition-colors"
-                >
-                  {/* Left: Time & Icon & Event Name */}
-                  <div className="flex items-center gap-4 min-w-[240px]">
-                    <span className="text-slate-500 font-mono text-[11px]">{evt.time}</span>
-                    <div className="flex items-center gap-2">
-                      <Icon className={`w-3.5 h-3.5 ${evt.iconColor}`} />
-                      <span className="font-bold text-slate-200 tracking-wide text-[11px]">
-                        {evt.name}
+          {/* TAB 1: Live Timeline Rows (Exact match with reference image table) */}
+          {activeBottomTab === 'timeline' && (
+            <div className="divide-y divide-white/[0.04]">
+              {defaultTimelineEvents.map((evt, idx) => {
+                const Icon = evt.icon;
+                return (
+                  <div
+                    key={idx}
+                    className="py-2.5 flex items-center justify-between text-xs font-sans hover:bg-white/[0.02] px-2 rounded-lg transition-colors"
+                  >
+                    {/* Left: Time & Icon & Event Name */}
+                    <div className="flex items-center gap-4 min-w-[240px]">
+                      <span className="text-slate-500 font-mono text-[11px]">{evt.time}</span>
+                      <div className="flex items-center gap-2">
+                        <Icon className={`w-3.5 h-3.5 ${evt.iconColor}`} />
+                        <span className="font-bold text-slate-200 tracking-wide text-[11px]">
+                          {evt.name}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Center: Description */}
+                    <div className="flex-1 px-4 text-slate-400 truncate text-[11px]">
+                      {evt.desc}
+                    </div>
+
+                    {/* Right: Generation Badge */}
+                    <div className="shrink-0">
+                      <span className={`px-2.5 py-0.5 rounded text-[10px] font-mono font-semibold ${evt.genColor}`}>
+                        {evt.gen}
                       </span>
                     </div>
                   </div>
+                );
+              })}
+            </div>
+          )}
 
-                  {/* Center: Description */}
-                  <div className="flex-1 px-4 text-slate-400 truncate text-[11px]">
-                    {evt.desc}
-                  </div>
+          {/* TAB 2: Voice Waveform Oscilloscope */}
+          {activeBottomTab === 'waveform' && (
+            <div className="py-4 flex flex-col items-center justify-center space-y-3">
+              <div className="text-xs text-slate-400 font-mono">
+                Real-Time Acoustic Oscilloscope & Spectrum Analyser
+              </div>
+              <canvas
+                ref={secondaryCanvasRef}
+                width={700}
+                height={120}
+                className="w-full max-w-2xl h-32 rounded-xl bg-black/40 border border-white/[0.06]"
+              />
+            </div>
+          )}
 
-                  {/* Right: Generation Badge */}
-                  <div className="shrink-0">
-                    <span className={`px-2.5 py-0.5 rounded text-[10px] font-mono font-semibold ${evt.genColor}`}>
-                      {evt.gen}
-                    </span>
-                  </div>
+          {/* TAB 3: Generation Flow Diagram */}
+          {activeBottomTab === 'flow' && (
+            <div className="py-4 font-mono text-xs space-y-3">
+              <div className="p-4 rounded-xl bg-black/40 border border-white/[0.06] space-y-3">
+                <div className="flex items-center gap-3">
+                  <span className="w-16 font-bold text-slate-400">GEN 1</span>
+                  <div className="flex-1 h-0.5 bg-gradient-to-r from-cyan-400 via-amber-400 to-red-500" />
+                  <span className="px-2 py-0.5 rounded bg-red-500/20 text-red-300 font-bold text-[10px]">
+                    ✕ INTERRUPTED & FLUSHED
+                  </span>
                 </div>
-              );
-            })}
-          </div>
+
+                <div className="pl-16 text-[11px] text-purple-400 flex items-center gap-2">
+                  <span>Delayed Tool Result Arrived</span>
+                  <span>→</span>
+                  <span className="text-red-400 font-bold">✕ REJECTED AS STALE</span>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <span className="w-16 font-bold text-cyan-300">GEN 2</span>
+                  <div className="flex-1 h-0.5 bg-gradient-to-r from-cyan-400 to-indigo-500" />
+                  <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold text-[10px]">
+                    ● ACTIVE RECOVERY DELIVERED
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -568,7 +674,14 @@ export const VoiceCorePage: React.FC<VoiceCorePageProps> = ({
             </div>
 
             <div className="space-y-2.5">
-              <div className="flex items-center justify-between text-xs">
+              {/* INC-0047 */}
+              <button
+                onClick={() => {
+                  const inc = incidents.find((i) => i.incidentId === 'INC-0047') || incidents[0];
+                  if (inc) onSelectIncident(inc);
+                }}
+                className="w-full flex items-center justify-between text-xs text-left hover:bg-white/[0.03] p-1 rounded-lg transition-colors cursor-pointer"
+              >
                 <div className="flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-emerald-400" />
                   <div>
@@ -577,9 +690,16 @@ export const VoiceCorePage: React.FC<VoiceCorePageProps> = ({
                   </div>
                 </div>
                 <span className="text-slate-500 text-[10px]">2 min ago</span>
-              </div>
+              </button>
 
-              <div className="flex items-center justify-between text-xs">
+              {/* INC-0046 */}
+              <button
+                onClick={() => {
+                  const inc = incidents.find((i) => i.incidentId === 'INC-0046') || incidents[0];
+                  if (inc) onSelectIncident(inc);
+                }}
+                className="w-full flex items-center justify-between text-xs text-left hover:bg-white/[0.03] p-1 rounded-lg transition-colors cursor-pointer"
+              >
                 <div className="flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-blue-400" />
                   <div>
@@ -588,9 +708,16 @@ export const VoiceCorePage: React.FC<VoiceCorePageProps> = ({
                   </div>
                 </div>
                 <span className="text-slate-500 text-[10px]">12 min ago</span>
-              </div>
+              </button>
 
-              <div className="flex items-center justify-between text-xs">
+              {/* INC-0045 */}
+              <button
+                onClick={() => {
+                  const inc = incidents.find((i) => i.incidentId === 'INC-0045') || incidents[0];
+                  if (inc) onSelectIncident(inc);
+                }}
+                className="w-full flex items-center justify-between text-xs text-left hover:bg-white/[0.03] p-1 rounded-lg transition-colors cursor-pointer"
+              >
                 <div className="flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-purple-400" />
                   <div>
@@ -599,9 +726,16 @@ export const VoiceCorePage: React.FC<VoiceCorePageProps> = ({
                   </div>
                 </div>
                 <span className="text-slate-500 text-[10px]">24 min ago</span>
-              </div>
+              </button>
 
-              <div className="flex items-center justify-between text-xs">
+              {/* INC-0044 */}
+              <button
+                onClick={() => {
+                  const inc = incidents.find((i) => i.incidentId === 'INC-0044') || incidents[0];
+                  if (inc) onSelectIncident(inc);
+                }}
+                className="w-full flex items-center justify-between text-xs text-left hover:bg-white/[0.03] p-1 rounded-lg transition-colors cursor-pointer"
+              >
                 <div className="flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-amber-400" />
                   <div>
@@ -610,7 +744,7 @@ export const VoiceCorePage: React.FC<VoiceCorePageProps> = ({
                   </div>
                 </div>
                 <span className="text-slate-500 text-[10px]">1 hour ago</span>
-              </div>
+              </button>
             </div>
           </div>
         </div>
