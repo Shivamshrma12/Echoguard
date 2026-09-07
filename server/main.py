@@ -31,7 +31,7 @@ from server.auth.token_service import TokenService
 
 gemini_api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY", "").strip()
 
-def get_gemini_response(prompt: str, context: str = "") -> str:
+async def get_gemini_response(prompt: str, context: str = "") -> str:
     global gemini_api_key
     if not gemini_api_key:
         return ""
@@ -42,8 +42,8 @@ def get_gemini_response(prompt: str, context: str = "") -> str:
             "You are EchoGuard, a realtime voice agent for safety-critical operations. "
             "Respond in 1-2 concise, clear spoken sentences. No markdown, no bullet points."
         )
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
+        response = await client.aio.models.generate_content(
+            model="gemini-3.6-flash",
             contents=f"{system_instruction}\nContext: {context}\nUser: {prompt}"
         )
         return response.text.strip()
@@ -247,7 +247,7 @@ async def process_user_query(body: Dict[str, Any] = Body(...)):
     )
 
     # Check if Gemini API is available
-    response_text = get_gemini_response(query, context=f"Current generation: {target_gen}")
+    response_text = await get_gemini_response(query, context=f"Current generation: {target_gen}")
     if not response_text:
         # Fallback intelligent domain response
         q_lower = query.lower()
