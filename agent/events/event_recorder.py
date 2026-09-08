@@ -36,6 +36,7 @@ class EventRecorder:
         event = VoiceEvent(
             id=f"EVT-{self._counter:05d}",
             timestamp=now,
+            timestamp_ms=round(now * 1000.0, 2),
             iso_time=iso,
             type=event_type,
             generationId=generation_id,

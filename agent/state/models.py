@@ -17,12 +17,28 @@ class VoiceState(str, Enum):
 class EventType(str, Enum):
     SESSION_STARTED = "SESSION_STARTED"
     USER_SPEECH_STARTED = "USER_SPEECH_STARTED"
+    USER_SPEECH_START = "USER_SPEECH_START"
     USER_SPEECH_ENDED = "USER_SPEECH_ENDED"
+    USER_SPEECH_END = "USER_SPEECH_END"
+    STT_PARTIAL = "STT_PARTIAL"
+    STT_FINAL = "STT_FINAL"
+    AGENT_TURN_START = "AGENT_TURN_START"
+    LLM_FIRST_TOKEN = "LLM_FIRST_TOKEN"
+    LLM_TEXT_READY = "LLM_TEXT_READY"
+    TTS_REQUEST_START = "TTS_REQUEST_START"
+    RIME_STREAM_CONNECTED = "RIME_STREAM_CONNECTED"
+    RIME_FIRST_AUDIO = "RIME_FIRST_AUDIO"
+    AUDIO_PLAYBACK_START = "AUDIO_PLAYBACK_START"
+    AUDIO_PLAYBACK_END = "AUDIO_PLAYBACK_END"
+    USER_INTERRUPTION = "USER_INTERRUPTION"
     GENERATION_CREATED = "GENERATION_CREATED"
+    NEW_GENERATION_CREATED = "NEW_GENERATION_CREATED"
     STATE_CHANGED = "STATE_CHANGED"
     TOOL_STARTED = "TOOL_STARTED"
     TOOL_COMPLETED = "TOOL_COMPLETED"
     GENERATION_INVALIDATED = "GENERATION_INVALIDATED"
+    AUDIO_CANCEL_REQUESTED = "AUDIO_CANCEL_REQUESTED"
+    AUDIO_CANCELLED = "AUDIO_CANCELLED"
     TTS_STARTED = "TTS_STARTED"
     TTS_STREAMING = "TTS_STREAMING"
     TTS_INTERRUPTED = "TTS_INTERRUPTED"
@@ -43,6 +59,7 @@ class EventSeverity(str, Enum):
 class VoiceEvent(BaseModel):
     id: str
     timestamp: float = Field(default_factory=time.time)
+    timestamp_ms: float = 0.0
     iso_time: str = ""
     type: EventType
     generationId: str
@@ -79,6 +96,16 @@ class SystemMetrics(BaseModel):
     avgRecoveryTimeMs: float = 0.0
     measuredInterruptToAudioStopMs: Optional[float] = None
     measuredNewGenToSpeechMs: Optional[float] = None
+    sttLatencyMs: Optional[float] = None
+    llmFirstTokenLatencyMs: Optional[float] = None
+    rimeTtfbMs: Optional[float] = None
+    playbackStartLatencyMs: Optional[float] = None
+    endToAudibleResponseMs: Optional[float] = None
+    interruptionDetectionLatencyMs: Optional[float] = None
+    audioCancellationLatencyMs: Optional[float] = None
+    generationInvalidationLatencyMs: Optional[float] = None
+    staleRejectionLatencyMs: Optional[float] = None
+    recoveryLatencyMs: Optional[float] = None
 
 class RimeProviderConfig(BaseModel):
     configured: bool = False

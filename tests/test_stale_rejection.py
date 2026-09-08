@@ -38,18 +38,38 @@ def test_stale_result_is_rejected():
     assert len(rejections) == 1
     assert rejections[0].generationId == "GEN-014"
 
-def test_valid_result_in_current_generation_is_accepted():
+def test_stale_tool_result_rejected():
+    """Exact test named per spec."""
     recorder = EventRecorder()
-    fence = GenerationFence(recorder, initial_gen=15)
+    fence = GenerationFence(recorder, initial_gen=41)
+    op_id = "op_radar_41"
+    op_gen = fence.register_async_operation(op_id, "radar_scan")
+    fence.trigger_interruption("Stop")
+    assert fence.current_generation_id == "GEN-042"
+    is_valid = fence.validate_operation_result(op_id, op_gen, {"clear": True})
+    assert is_valid is False
+    assert fence.metrics.staleResultsBlocked == 1
+
+def test_parallel_tool_race():
+    """Tests multiple concurrent tools spawned under older generations."""
+    recorder = EventRecorder()
+    fence = GenerationFence(recorder, initial_gen=10)
     
-    op_id = "op_valid_456"
-    op_gen = fence.register_async_operation(op_id, "get_weather")
+    # Spawn 3 tools in GEN-010
+    ops = [f"op_{i}" for i in range(3)]
+    for op in ops:
+        fence.register_async_operation(op, "sensor_read")
+        
+    # Interruption advances to GEN-011
+    fence.trigger_interruption("Emergency stop")
     
-    is_valid = fence.validate_operation_result(
-        op_id=op_id,
-        op_generation_id=op_gen,
-        result_payload={"weather": "sunny"}
-    )
+    # Spawn 1 tool in GEN-011
+    fence.register_async_operation("op_new", "emergency_brake")
     
-    assert is_valid is True
-    assert fence.metrics.staleResultsBlocked == 0
+    # Stale tools arrive
+    for op in ops:
+        assert fence.validate_operation_result(op, "GEN-010", {"ok": True}) is False
+        
+    # Fresh tool arrives
+    assert fence.validate_operation_result("op_new", "GEN-011", {"brake": "engaged"}) is True
+    assert fence.metrics.staleResultsBlocked == 3

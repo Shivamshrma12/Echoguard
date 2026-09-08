@@ -19,15 +19,27 @@ export const EvidencePage: React.FC = () => {
     }
   };
 
-  const handleExportJSON = () => {
-    if (!evidenceData) return;
-    const blob = new Blob([JSON.stringify(evidenceData, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `echoguard_evidence_${Date.now()}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const handleExportJSON = async () => {
+    try {
+      const res = await fetch('/api/evidence/export');
+      const exportData = res.ok ? await res.json() : evidenceData;
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `echoguard_evidence_${Date.now()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      if (!evidenceData) return;
+      const blob = new Blob([JSON.stringify(evidenceData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `echoguard_evidence_${Date.now()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
   };
 
   const handleCopyJSON = () => {

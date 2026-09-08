@@ -49,7 +49,14 @@ export const IncidentsPage: React.FC<IncidentsPageProps> = ({
                   }`}
                 >
                   <div className="flex items-center justify-between text-xs">
-                    <span className="font-bold text-white">{inc.incidentId}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-bold text-white">{inc.incidentId}</span>
+                      {inc.evidenceType?.includes('FIXTURE') && (
+                        <span className="text-[8px] px-1 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                          FIXTURE
+                        </span>
+                      )}
+                    </div>
                     <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
                       {inc.resolution}
                     </span>

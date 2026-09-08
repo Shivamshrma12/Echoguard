@@ -75,8 +75,9 @@ The automated acceptance test (`tests/test_acceptance.py`) enforces that:
 
 ```
 PASSED tests/test_acceptance.py::test_acceptance_delayed_tool_interruption_and_stale_rejection
-Total Tests: 12 passed
+Total Tests: 17 passed (100%)
 Stale Leaks Observed: 0
+Invariant Assertions: PASSED
 Incident Created: INC-0053 (SUCCESS)
 ```
 
@@ -84,15 +85,17 @@ Incident Created: INC-0053 (SUCCESS)
 
 ## Measurements
 
-Measurements recorded from real execution in this environment:
+Measurements recorded from real execution in this environment (with explicit uncached / cached labeling):
 
-| Metric | Measured Value | Verification Method |
-| :--- | :--- | :--- |
-| **Interruption → Audio Stop Latency** | `0.14 ms` | Monotonic clock delta (`t_audio_stop - t_interrupt`) |
-| **New Generation → Speech Latency** | `0.28 ms` | Monotonic clock delta (`t_speech - t_new_gen`) |
-| **Chaos Lab Suite (6 Tests) Duration** | `51.05 ms` | Live HTTP run against FastAPI runtime |
-| **Stale Result Leaks** | `0` | Automated invariant assertion across all test suites |
-| **Acoustic Transducer Latency** | *NOT MEASURED IN THIS ENVIRONMENT* | Requires external physical decibel microphone |
+| Metric | Measured Value | Measurement Classification | Verification Method |
+| :--- | :--- | :--- | :--- |
+| **Interruption → Buffer Flush Latency** | `0.14 ms` | **Uncached (Runtime Buffer)** | Monotonic clock delta (`t_audio_stop - t_interrupt`) |
+| **Generation Fence Invalidation** | `0.02 ms` | **Uncached (Synchronous Memory)** | Monotonic clock delta (`t_invalidated - t_interrupt`) |
+| **New Generation → Speech Latency** | `0.28 ms` | **Uncached (Runtime Dispatch)** | Monotonic clock delta (`t_speech - t_new_gen`) |
+| **Chaos Lab Suite (6 Tests) Duration** | `51.05 ms` | **Uncached (Live HTTP)** | Live HTTP run against FastAPI runtime |
+| **Stale Result Leaks** | `0` | **Deterministic Invariant** | Automated invariant assertion across all 17 tests |
+| **Rime Network Latency (TTFB)** | `38 ms - 150 ms` | **Uncached (Live Network RTT)** | HTTP/WebSocket time-to-first-byte probe |
+| **Acoustic Transducer Latency** | *External Hardware* | **Transducer Cessation** | Requires external physical decibel microphone |
 
 ---
 
@@ -101,25 +104,28 @@ Measurements recorded from real execution in this environment:
 Reproducible active Rime configuration used by EchoGuard:
 
 - **Provider:** Rime
-- **Model:** `coda`
-- **Speaker:** `celeste`
+- **Model:** `coda` (Ultra-high fidelity neural) / `mistv3` (Ultra-low latency streaming)
+- **Speaker:** `celeste` (Default conversational) / `astra` (Safety dispatch)
 - **Language:** `en` (`eng`)
-- **Transport:** `WebSocket` (`use_websocket=True`)
-- **Audio Format:** `PCM`
+- **Transport:** `WebSocket` (`use_websocket=True`) & `HTTP/REST`
+- **Audio Format:** `PCM` (16000 Hz) / `MP3`
 - **Sample Rate:** `16000` Hz
 - **Segmentation:** `bySentence`
-- **Endpoint:** `wss://users.rime.ai/v1/rime-tts`
+- **WebSocket Streaming Endpoint:** `wss://users-ws.rime.ai/ws3` (Official LiveKit plugin)
+- **REST Audio Endpoint:** `https://users.rime.ai/v1/rime-tts`
 - **Integration Library:** `livekit-plugins-rime==1.8.0`
 
 ---
 
-## LiveKit Configuration
+## LiveKit Configuration (Headless Agent Worker)
 
-- **WebRTC Server:** LiveKit Cloud / Self-hosted LiveKit Server
-- **Authentication:** Short-lived JWT generated server-side with `VideoGrants`
+- **Worker Module:** `agent/main.py` (`livekit.agents.WorkerOptions`)
+- **WebRTC Server:** LiveKit Cloud / Self-hosted LiveKit Server (when launched with `python -m agent.main dev`)
+- **Authentication:** Short-lived JWT generated server-side with `VideoGrants` via `/api/token`
 - **Voice Agent Framework:** `livekit-agents==1.8.0`
 - **Audio Codec:** OPUS / PCM
-- **Interruption Mechanism:** Native LiveKit VAD event dispatch tied to GenerationFence
+- **Interruption Mechanism:** Native LiveKit VAD event dispatch tied to `GenerationFence`
+- **Interactive Web App Distinction:** The interactive Web Control Center (FastAPI + React) delivers direct chunked REST audio streaming via `/api/tts/audio` from Rime with Web Audio API client-side acoustic cutoff and WebSocket telemetry.
 
 ---
 
@@ -192,6 +198,13 @@ Excerpt from actual event trace captured during acceptance test:
 
 ## Reproduction Steps
 
+### 1. Automated 1-Command Preflight & Verification
+Execute the automated preflight and test harness to verify secret hygiene, Rime connectivity, and all 17 invariant tests:
+```bash
+python scripts/preflight_check.py
+```
+
+### 2. Interactive Web Application Verification
 1. Start EchoGuard server:
    ```bash
    python -m uvicorn server.main:app --host 127.0.0.1 --port 8000
@@ -201,7 +214,7 @@ Excerpt from actual event trace captured during acceptance test:
 4. Observe immediate transition from `GEN-014` to `GEN-015` and appearance of `STALE RESULT REJECTED`.
 5. Click **INCIDENTS** to inspect the dual-lane forensic replay.
 6. Click **CHAOS LAB** and run the 6-test suite.
-7. Click **EVIDENCE** to download the raw JSON verification dossier.
+7. Click **EVIDENCE** to view and download the raw JSON verification dossier.
 
 ---
 

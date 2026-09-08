@@ -11,6 +11,11 @@ export class AudioManager {
   private isMicActive: boolean = false;
   private recognition: any = null;
   private currentUtterance: SpeechSynthesisUtterance | null = null;
+  public isSpeaking: boolean = false;
+  private silenceTimer: any = null;
+  private accumulatedSpeech: string = '';
+  private audioElement: HTMLAudioElement | null = null;
+  private shouldBeListening: boolean = false;
 
   public async startMicrophone(): Promise<boolean> {
     try {
@@ -23,7 +28,15 @@ export class AudioManager {
         await this.audioCtx.resume();
       }
 
-      this.micStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      // Request microphone with hardware/browser Acoustic Echo Cancellation (AEC)
+      this.micStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+        video: false,
+      });
       this.sourceNode = this.audioCtx.createMediaStreamSource(this.micStream);
 
       this.analyser = this.audioCtx.createAnalyser();
@@ -53,7 +66,7 @@ export class AudioManager {
   }
 
   /**
-   * Starts browser speech recognition so you can speak naturally
+   * Starts browser speech recognition with immediate interrupt handling and continuous listening
    */
   public startListening(
     onResult: (text: string) => void,
@@ -67,9 +80,11 @@ export class AudioManager {
       return false;
     }
 
+    this.shouldBeListening = true;
+
     try {
       if (this.recognition) {
-        this.recognition.abort();
+        try { this.recognition.abort(); } catch {}
       }
 
       const rec = new SpeechRecognition();
@@ -78,21 +93,72 @@ export class AudioManager {
       rec.lang = 'en-US';
 
       rec.onspeechstart = () => {
-        if (onSpeechStart) onSpeechStart();
+        // Instant Acoustic Cutoff: if agent is speaking, cut audio immediately (0ms)
+        if (this.isSpeaking) {
+          this.flushAudio();
+          if (onSpeechStart) onSpeechStart();
+        }
       };
 
       rec.onresult = (event: any) => {
-        let transcript = '';
+        // If agent was still producing audio, cut it instantly
+        if (this.isSpeaking) {
+          this.flushAudio();
+          if (onSpeechStart) onSpeechStart();
+        }
+
+        let interim = '';
+        let lastIsFinal = false;
         for (let i = event.resultIndex; i < event.results.length; ++i) {
-          transcript += event.results[i][0].transcript;
+          const item = event.results[i];
+          if (item.isFinal) {
+            this.accumulatedSpeech += (this.accumulatedSpeech ? ' ' : '') + item[0].transcript;
+            lastIsFinal = true;
+          } else {
+            interim += item[0].transcript;
+          }
         }
-        if (transcript.trim()) {
-          onResult(transcript.trim());
+
+        const candidate = (this.accumulatedSpeech + ' ' + interim).trim();
+        if (!candidate) return;
+
+        // Fast debounce: 220ms when speech is finalized, 400ms for pauses
+        const debounceMs = lastIsFinal ? 220 : 400;
+
+        if (this.silenceTimer) {
+          clearTimeout(this.silenceTimer);
         }
+        this.silenceTimer = setTimeout(() => {
+          const textToSend = (this.accumulatedSpeech || candidate).trim();
+          this.accumulatedSpeech = '';
+          if (textToSend) {
+            onResult(textToSend);
+          }
+        }, debounceMs);
       };
 
       rec.onerror = (e: any) => {
+        // Ignore expected silence timeouts from browser engine
+        if (e.error === 'no-speech' || e.error === 'aborted') {
+          return;
+        }
+        console.warn('Speech recognition notice:', e.error);
         if (onError) onError(e);
+      };
+
+      rec.onend = () => {
+        // Browser SpeechRecognition automatically cuts off after pauses; auto-restart if active
+        if (this.shouldBeListening) {
+          setTimeout(() => {
+            if (this.shouldBeListening) {
+              try {
+                rec.start();
+              } catch (e) {
+                // Ignore if already starting
+              }
+            }
+          }, 200);
+        }
       };
 
       rec.start();
@@ -105,6 +171,12 @@ export class AudioManager {
   }
 
   public stopListening(): void {
+    this.shouldBeListening = false;
+    if (this.silenceTimer) {
+      clearTimeout(this.silenceTimer);
+      this.silenceTimer = null;
+    }
+    this.accumulatedSpeech = '';
     if (this.recognition) {
       try {
         this.recognition.stop();
@@ -116,49 +188,109 @@ export class AudioManager {
   }
 
   /**
-   * Speaks the response aloud through your speakers
+   * Speaks the response through a single dedicated Rime TTS audio channel.
+   * Guaranteed not to hang voice state.
    */
-  public speak(
+  public async speak(
+    text: string,
+    onStart?: () => void,
+    onEnd?: () => void
+  ): Promise<void> {
+    this.flushAudio();
+    this.isSpeaking = true;
+
+    if (!this.audioElement) {
+      this.audioElement = new Audio();
+    }
+    const audio = this.audioElement;
+
+    let hasStarted = false;
+    let hasEnded = false;
+
+    const notifyStart = () => {
+      if (!hasStarted) {
+        hasStarted = true;
+        this.isSpeaking = true;
+        if (onStart) onStart();
+      }
+    };
+
+    const notifyEnd = () => {
+      if (!hasEnded) {
+        hasEnded = true;
+        this.isSpeaking = false;
+        if (onEnd) onEnd();
+      }
+    };
+
+    // Reset handlers
+    audio.onplay = () => {
+      notifyStart();
+    };
+
+    audio.onended = () => {
+      notifyEnd();
+    };
+
+    audio.onerror = (e) => {
+      console.warn('Rime audio load notice, falling back to speech synthesis:', e);
+      this.fallbackSpeak(text, notifyStart, notifyEnd);
+    };
+
+    const rimeUrl = `/api/tts/audio?text=${encodeURIComponent(text)}`;
+    audio.src = rimeUrl;
+
+    try {
+      await audio.play();
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        return;
+      }
+      console.warn('Audio play notice, falling back to speech synthesis:', err);
+      this.fallbackSpeak(text, notifyStart, notifyEnd);
+    }
+  }
+
+  private fallbackSpeak(
     text: string,
     onStart?: () => void,
     onEnd?: () => void
   ): void {
     if (!('speechSynthesis' in window)) {
-      console.warn('SpeechSynthesis not available in browser');
+      this.isSpeaking = false;
       if (onStart) onStart();
       setTimeout(() => {
         if (onEnd) onEnd();
-      }, 2000);
+      }, 1500);
       return;
     }
 
-    // Cancel any previous speech
     window.speechSynthesis.cancel();
-
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.rate = 1.05;
     utterance.pitch = 1.0;
 
-    // Pick a natural English voice if available
     const voices = window.speechSynthesis.getVoices();
     const voice = voices.find(
-      (v) => (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha') || v.name.includes('Ava')) && v.lang.startsWith('en')
+      (v) => (v.name.includes('Natural') || v.name.includes('Google') || v.name.includes('Samantha')) && v.lang.startsWith('en')
     ) || voices.find((v) => v.lang.startsWith('en'));
     if (voice) {
       utterance.voice = voice;
     }
 
     utterance.onstart = () => {
+      this.isSpeaking = true;
       if (onStart) onStart();
     };
 
     utterance.onend = () => {
+      this.isSpeaking = false;
       this.currentUtterance = null;
       if (onEnd) onEnd();
     };
 
-    utterance.onerror = (e) => {
-      console.warn('Speech synthesis error:', e);
+    utterance.onerror = () => {
+      this.isSpeaking = false;
       this.currentUtterance = null;
       if (onEnd) onEnd();
     };
@@ -168,9 +300,21 @@ export class AudioManager {
   }
 
   /**
-   * Immediately flushes and cancels in-flight audio when interrupted
+   * Deterministic 0ms Acoustic Cutoff:
+   * Instantly pauses audio, removes source, and purges hardware buffer.
    */
   public flushAudio(): void {
+    this.isSpeaking = false;
+    if (this.silenceTimer) {
+      clearTimeout(this.silenceTimer);
+      this.silenceTimer = null;
+    }
+    this.accumulatedSpeech = '';
+    if (this.audioElement) {
+      this.audioElement.pause();
+      this.audioElement.removeAttribute('src');
+      this.audioElement.load(); // Purges audio pipeline buffer instantly
+    }
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }

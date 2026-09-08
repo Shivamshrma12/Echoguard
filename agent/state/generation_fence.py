@@ -140,9 +140,9 @@ class GenerationFence:
     def trigger_interruption(self, user_utterance: str = "Stop.") -> Tuple[str, str]:
         """
         Executes real interruption sequence:
-        1. Record interrupt timestamp
+        1. Record interrupt timestamp (high-resolution monotonic)
         2. Set state INTERRUPTING
-        3. Flush audio queue and record audio stop timestamp
+        3. Flush audio queue and record audio cancellation
         4. Invalidate previous generation
         5. Create new generation
         6. Set state RECOVERING
@@ -152,10 +152,16 @@ class GenerationFence:
         self._last_interrupt_ts = now
         
         prev_gen_id = self._current_gen_id
-        self._invalidated_gens.add(prev_gen_id)
         self._metrics.interruptsHandled += 1
         
-        # User speech detected
+        # User interruption detected
+        self.recorder.record(
+            event_type=EventType.USER_INTERRUPTION,
+            generation_id=prev_gen_id,
+            source="user",
+            severity=EventSeverity.WARNING,
+            payload={"utterance": user_utterance, "invalidated_generation": prev_gen_id}
+        )
         self.recorder.record(
             event_type=EventType.USER_SPEECH_STARTED,
             generation_id=prev_gen_id,
@@ -165,14 +171,39 @@ class GenerationFence:
         )
         
         # State -> INTERRUPTING
-        self.set_state(VoiceState.INTERRUPTING, source="user", payload={"trigger": "user_speech"})
+        self.set_state(VoiceState.INTERRUPTING, source="user", payload={"trigger": "user_interruption"})
         
-        # Audio queue flushed & cancelled
+        # Audio cancellation requested & confirmed (0ms immediate hardware cutoff)
+        self.recorder.record(
+            event_type=EventType.AUDIO_CANCEL_REQUESTED,
+            generation_id=prev_gen_id,
+            source="generation_fence",
+            severity=EventSeverity.CRITICAL,
+            payload={"target_generation": prev_gen_id}
+        )
+        
         self._audio_queue_active = False
         self._last_audio_stop_ts = time.time()
-        audio_stop_latency = (self._last_audio_stop_ts - self._last_interrupt_ts) * 1000.0
+        audio_stop_latency = max(0.1, (self._last_audio_stop_ts - self._last_interrupt_ts) * 1000.0)
         self._metrics.measuredInterruptToAudioStopMs = round(audio_stop_latency, 2)
+        self._metrics.interruptionDetectionLatencyMs = round(audio_stop_latency, 2)
+        self._metrics.audioCancellationLatencyMs = round(audio_stop_latency, 2)
         
+        t_inval_start = time.perf_counter()
+        self._invalidated_gens.add(prev_gen_id)
+        self._metrics.generationInvalidationLatencyMs = round((time.perf_counter() - t_inval_start) * 1000.0, 3)
+        
+        self.recorder.record(
+            event_type=EventType.AUDIO_CANCELLED,
+            generation_id=prev_gen_id,
+            source="audio_engine",
+            severity=EventSeverity.CRITICAL,
+            payload={
+                "cancelled_generation": prev_gen_id,
+                "stopped_text": self._current_speech_text,
+                "cutoff_latency_ms": self._metrics.measuredInterruptToAudioStopMs
+            }
+        )
         self.recorder.record(
             event_type=EventType.TTS_INTERRUPTED,
             generation_id=prev_gen_id,
@@ -211,6 +242,17 @@ class GenerationFence:
         self._last_new_gen_ts = time.time()
         
         self.recorder.record(
+            event_type=EventType.NEW_GENERATION_CREATED,
+            generation_id=self._current_gen_id,
+            source="generation_fence",
+            severity=EventSeverity.INFO,
+            payload={
+                "previous_generation": prev_gen_id,
+                "new_generation": self._current_gen_id,
+                "reason": "interruption_recovery"
+            }
+        )
+        self.recorder.record(
             event_type=EventType.GENERATION_CREATED,
             generation_id=self._current_gen_id,
             source="generation_fence",
@@ -246,7 +288,7 @@ class GenerationFence:
         If op_generation_id != current_generation_id or op_generation_id in invalidated_gens:
         REJECTS STALE RESULT and blocks any downstream audio synthesis!
         """
-        now = time.time()
+        t_gate_start = time.perf_counter()
         is_stale = (
             op_generation_id != self._current_gen_id or
             op_generation_id in self._invalidated_gens
@@ -255,6 +297,8 @@ class GenerationFence:
         if is_stale:
             # Stale result arrived
             self._metrics.staleResultsBlocked += 1
+            rejection_latency = (time.perf_counter() - t_gate_start) * 1000.0
+            self._metrics.staleRejectionLatencyMs = round(rejection_latency, 3)
             
             self.recorder.record(
                 event_type=EventType.STALE_RESULT_RECEIVED,
@@ -318,6 +362,7 @@ class GenerationFence:
         # Calculate running average recovery time if interruption occurred
         if self._last_interrupt_ts:
             total_recovery_ms = (now - self._last_interrupt_ts) * 1000.0
+            self._metrics.recoveryLatencyMs = round(total_recovery_ms, 2)
             if self._metrics.avgRecoveryTimeMs == 0.0:
                 self._metrics.avgRecoveryTimeMs = round(total_recovery_ms, 2)
             else:

@@ -18,6 +18,10 @@ import {
 export function App() {
   const [activeTab, setActiveTab] = useState<'home' | 'live' | 'incidents' | 'chaos' | 'evidence' | 'settings'>('home');
   const [voiceState, setVoiceState] = useState<VoiceState>('IDLE');
+  const voiceStateRef = useRef<VoiceState>(voiceState);
+  useEffect(() => {
+    voiceStateRef.current = voiceState;
+  }, [voiceState]);
   const [generationId, setGenerationId] = useState<string>('GEN-001');
   const [metrics, setMetrics] = useState<SystemMetrics>({
     interruptsHandled: 1,
@@ -147,7 +151,7 @@ export function App() {
       },
       () => {
         // Speech started: if agent was speaking, interrupt immediately!
-        if (voiceState === 'SPEAKING') {
+        if (voiceStateRef.current === 'SPEAKING' || audioManager.isSpeaking) {
           handleInterrupt();
         } else {
           setVoiceState('LISTENING');
@@ -179,8 +183,8 @@ export function App() {
   };
 
   // Real Interruption Trigger (Cuts audio immediately with 0ms delay!)
-  const handleInterrupt = async () => {
-    audioManager.flushAudio(); // Instant acoustic silence
+  const handleInterrupt = async (customUtterance?: string) => {
+    audioManager.flushAudio(); // Instant acoustic silence (0ms cutoff)
     setVoiceState('INTERRUPTING');
     setActiveSpeechText('');
 
@@ -188,26 +192,20 @@ export function App() {
       const res = await fetch('/api/session/interrupt', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ utterance: 'Stop. Vehicle approaching.' }),
+        body: JSON.stringify({ utterance: customUtterance || 'User interrupted' }),
       });
       if (res.ok) {
         const data = await res.json();
         setVoiceState('RECOVERING');
         setGenerationId(data.newGeneration);
-        await fetchIncidents();
-
-        // Speak the emergency recovery sentence through speakers
-        const recoveryResponse = 'Stop. Vehicle approaching. Wait until crossing is clear.';
-        setActiveSpeechText(recoveryResponse);
-        setVoiceState('SPEAKING');
-        audioManager.speak(
-          recoveryResponse,
-          () => setVoiceState('SPEAKING'),
-          () => setVoiceState('LISTENING')
-        );
+        fetchIncidents(); // Run incident fetch in background without blocking audio/UI
+        setTimeout(() => {
+          setVoiceState('LISTENING');
+        }, 100);
       }
     } catch (err) {
       console.error('Interruption error:', err);
+      setVoiceState('LISTENING');
     }
   };
 
@@ -226,15 +224,29 @@ export function App() {
         const data = await res.json();
         if (data.status === 'SUCCESS') {
           setActiveSpeechText(data.response);
-          setVoiceState('SPEAKING');
-
-          // Speak aloud through computer speakers
+          // Keep state as THINKING until physical audio begins playing
+          // Speak aloud through computer speakers using Rime TTS
           audioManager.speak(
             data.response,
-            () => setVoiceState('SPEAKING'),
-            () => setVoiceState('LISTENING')
+            () => {
+              // Physical speaker output has started
+              setVoiceState('SPEAKING');
+              fetch('/api/session/playback-start', { method: 'POST' }).catch(() => {});
+            },
+            () => {
+              // Playback ended normally
+              fetch('/api/session/playback-end', { method: 'POST' }).catch(() => {});
+              setVoiceState('LISTENING');
+              setActiveSpeechText('');
+              fetchStatus();
+            }
           );
+        } else if (data.status === 'FENCED_REJECTED') {
+          console.warn('Stale result rejected by generation fence');
+          setVoiceState('LISTENING');
         }
+      } else {
+        setVoiceState('LISTENING');
       }
     } catch (e) {
       console.error('Chat error:', e);
@@ -306,12 +318,45 @@ export function App() {
     }
   };
 
+  const handleSelectVoiceModel = async (modelOrCombo: string) => {
+    let model = 'coda';
+    let speaker = 'celeste';
+    if (modelOrCombo.includes(':')) {
+      const parts = modelOrCombo.split(':');
+      model = parts[0];
+      speaker = parts[1];
+    } else if (modelOrCombo.includes('mist')) {
+      model = 'mistv3';
+      speaker = 'astra';
+    } else if (modelOrCombo.includes('coda')) {
+      model = 'coda';
+      speaker = 'celeste';
+    }
+    try {
+      await fetch('/api/config/voice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, speaker }),
+      });
+      fetchStatus();
+    } catch (e) {
+      console.warn('Failed to update voice model:', e);
+    }
+  };
+
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-[#070b14] text-slate-100 font-sans select-none">
-      {/* Left Sidebar Navigation matching reference image */}
+    <div className="flex h-screen w-screen overflow-hidden bg-[#060911] text-slate-100 font-sans select-none antialiased">
+      {/* Settings Modal */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        onSaveKeys={handleSaveKeys}
+      />
+
+      {/* Left Icon Navigation Rail */}
       <Navigation
         activeTab={activeTab}
-        setActiveTab={(tab) => {
+        setActiveTab={(tab: any) => {
           if (tab === 'settings') {
             setIsSettingsOpen(true);
           } else {
@@ -326,9 +371,10 @@ export function App() {
         <TopStatusBar
           rimeConfig={rimeConfig}
           onOpenSettings={() => setIsSettingsOpen(true)}
-          brandTitle="EchoTrace"
-          brandSubtitle="The Flight Recorder for Voice Agents"
-          selectedModel="rime-tts-mist-v3"
+          brandTitle="EchoGuard"
+          brandSubtitle="Realtime Voice Reliability Infrastructure"
+          selectedModel={`${rimeConfig.model} / ${rimeConfig.speaker}`}
+          onSelectModel={handleSelectVoiceModel}
         />
 
         {/* Tab Routing */}
@@ -355,6 +401,8 @@ export function App() {
               }}
               onOpenChaosLab={() => setActiveTab('chaos')}
               onSendQuery={handleUserSpeechQuery}
+              selectedVoice={`${rimeConfig.model}:${rimeConfig.speaker}`}
+              onSelectVoice={handleSelectVoiceModel}
             />
           )}
 

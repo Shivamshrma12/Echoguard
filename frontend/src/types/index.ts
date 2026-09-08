@@ -12,12 +12,28 @@ export type VoiceState =
 export type EventType =
   | 'SESSION_STARTED'
   | 'USER_SPEECH_STARTED'
+  | 'USER_SPEECH_START'
   | 'USER_SPEECH_ENDED'
+  | 'USER_SPEECH_END'
+  | 'STT_PARTIAL'
+  | 'STT_FINAL'
+  | 'AGENT_TURN_START'
+  | 'LLM_FIRST_TOKEN'
+  | 'LLM_TEXT_READY'
+  | 'TTS_REQUEST_START'
+  | 'RIME_STREAM_CONNECTED'
+  | 'RIME_FIRST_AUDIO'
+  | 'AUDIO_PLAYBACK_START'
+  | 'AUDIO_PLAYBACK_END'
+  | 'USER_INTERRUPTION'
   | 'GENERATION_CREATED'
+  | 'NEW_GENERATION_CREATED'
   | 'STATE_CHANGED'
   | 'TOOL_STARTED'
   | 'TOOL_COMPLETED'
   | 'GENERATION_INVALIDATED'
+  | 'AUDIO_CANCEL_REQUESTED'
+  | 'AUDIO_CANCELLED'
   | 'TTS_STARTED'
   | 'TTS_STREAMING'
   | 'TTS_INTERRUPTED'
@@ -34,6 +50,7 @@ export type EventSeverity = 'INFO' | 'WARNING' | 'CRITICAL' | 'RECOVERY';
 export interface VoiceEvent {
   id: string;
   timestamp: number;
+  timestamp_ms?: number;
   iso_time: string;
   type: EventType;
   generationId: string;
@@ -69,6 +86,16 @@ export interface SystemMetrics {
   avgRecoveryTimeMs: number;
   measuredInterruptToAudioStopMs: number | null;
   measuredNewGenToSpeechMs: number | null;
+  sttLatencyMs?: number | null;
+  llmFirstTokenLatencyMs?: number | null;
+  rimeTtfbMs?: number | null;
+  playbackStartLatencyMs?: number | null;
+  endToAudibleResponseMs?: number | null;
+  interruptionDetectionLatencyMs?: number | null;
+  audioCancellationLatencyMs?: number | null;
+  generationInvalidationLatencyMs?: number | null;
+  staleRejectionLatencyMs?: number | null;
+  recoveryLatencyMs?: number | null;
 }
 
 export interface RimeProviderConfig {

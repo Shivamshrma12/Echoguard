@@ -23,7 +23,8 @@ class RimeProviderService:
         self.audio_format = os.environ.get("RIME_AUDIO_FORMAT", "PCM").strip()
         self.sample_rate = int(os.environ.get("RIME_SAMPLE_RATE", "16000"))
         self.segmentation = os.environ.get("RIME_SEGMENTATION", "bySentence").strip()
-        self.endpoint = "wss://users.rime.ai/v1/rime-tts"
+        self.endpoint = "wss://users-ws.rime.ai/ws3"
+        self.rest_endpoint = "https://users.rime.ai/v1/rime-tts"
         
         self.is_connected = False
         self.probe_error: Optional[str] = None
@@ -79,7 +80,7 @@ class RimeProviderService:
 
     async def probe_connection(self) -> bool:
         """
-        Probes Rime API connectivity.
+        Probes Rime API connectivity with live verification request.
         """
         if not self.api_key or self.api_key.startswith("your_"):
             self.is_connected = False
@@ -87,21 +88,29 @@ class RimeProviderService:
             return False
 
         try:
-            # We can probe Rime endpoint or test instantiate TTS plugin
-            from livekit.plugins import rime
-            tts = rime.TTS(
-                model=self.model,
-                speaker=self.speaker,
-                lang="eng",
-                use_websocket=True,
-                segment="bySentence",
-                sample_rate=self.sample_rate,
-                api_key=self.api_key
-            )
-            self._tts_instance = tts
-            self.is_connected = True
-            self.probe_error = None
-            return True
+            import httpx
+            async with httpx.AsyncClient(timeout=4.0) as client:
+                resp = await client.post(
+                    self.rest_endpoint,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Accept": "audio/mp3",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "speaker": self.speaker,
+                        "text": "Ready",
+                        "modelId": self.model
+                    }
+                )
+                if resp.status_code == 200:
+                    self.is_connected = True
+                    self.probe_error = None
+                    return True
+                else:
+                    self.is_connected = False
+                    self.probe_error = f"HTTP {resp.status_code}: {resp.text[:100]}"
+                    return False
         except Exception as e:
             self.is_connected = False
             self.probe_error = str(e)
