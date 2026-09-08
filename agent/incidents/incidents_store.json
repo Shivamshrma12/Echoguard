@@ -1,5 +1,343 @@
 [
   {
+    "incidentId": "INC-0086",
+    "timestamp": 1788884105.9450357,
+    "trigger": "VOICE INTERRUPTION",
+    "initialGeneration": "GEN-014",
+    "finalGeneration": "GEN-015",
+    "durationMs": 27.14,
+    "staleResultsCount": 1,
+    "audioState": "FLUSHED",
+    "resolution": "SUCCESS",
+    "evidenceType": "EVENT RECONSTRUCTION",
+    "whatAgentThought": "Continue toward the next crossing. The path ahead appears clear...",
+    "whatUserHeard": "Continue toward the next\u2014 [INTERRUPTED] Stop. Vehicle approaching. Wait until the crossing is clear.",
+    "whatWasInvalidated": "GEN-014 path clearance prediction and active Rime audio stream",
+    "whatWasRejected": "GEN-014 delayed optical scan tool result (arrived after interruption)",
+    "whatWasDelivered": "GEN-015 emergency vehicle warning spoken via Rime (coda/celeste)",
+    "events": [
+      {
+        "id": "EVT-00001",
+        "timestamp": 1788884105.91788,
+        "timestamp_ms": 1788884105917.88,
+        "iso_time": "21:45:05.917",
+        "type": "STATE_CHANGED",
+        "generationId": "GEN-014",
+        "source": "rime",
+        "severity": "INFO",
+        "payload": {
+          "previous_state": "IDLE",
+          "new_state": "SPEAKING"
+        }
+      },
+      {
+        "id": "EVT-00002",
+        "timestamp": 1788884105.917948,
+        "timestamp_ms": 1788884105917.95,
+        "iso_time": "21:45:05.917",
+        "type": "TTS_STARTED",
+        "generationId": "GEN-014",
+        "source": "Rime",
+        "severity": "INFO",
+        "payload": {
+          "text": "Continue toward the next crossing. The path ahead appears clear...",
+          "provider": "Rime"
+        }
+      },
+      {
+        "id": "EVT-00003",
+        "timestamp": 1788884105.9179692,
+        "timestamp_ms": 1788884105917.97,
+        "iso_time": "21:45:05.917",
+        "type": "TTS_STREAMING",
+        "generationId": "GEN-014",
+        "source": "Rime",
+        "severity": "INFO",
+        "payload": {
+          "text": "Continue toward the next crossing. The path ahead appears clear...",
+          "status": "streaming"
+        }
+      },
+      {
+        "id": "EVT-00004",
+        "timestamp": 1788884105.9179857,
+        "timestamp_ms": 1788884105917.99,
+        "iso_time": "21:45:05.917",
+        "type": "TOOL_STARTED",
+        "generationId": "GEN-014",
+        "source": "tool",
+        "severity": "INFO",
+        "payload": {
+          "op_id": "op_sensor_crosswalk_check",
+          "op_name": "crosswalk_optical_scan"
+        }
+      },
+      {
+        "id": "EVT-00005",
+        "timestamp": 1788884105.9444964,
+        "timestamp_ms": 1788884105944.5,
+        "iso_time": "21:45:05.944",
+        "type": "USER_INTERRUPTION",
+        "generationId": "GEN-014",
+        "source": "user",
+        "severity": "WARNING",
+        "payload": {
+          "utterance": "Stop. There is a vehicle approaching.",
+          "invalidated_generation": "GEN-014"
+        }
+      },
+      {
+        "id": "EVT-00006",
+        "timestamp": 1788884105.9446397,
+        "timestamp_ms": 1788884105944.64,
+        "iso_time": "21:45:05.944",
+        "type": "USER_SPEECH_STARTED",
+        "generationId": "GEN-014",
+        "source": "user",
+        "severity": "WARNING",
+        "payload": {
+          "utterance": "Stop. There is a vehicle approaching."
+        }
+      },
+      {
+        "id": "EVT-00007",
+        "timestamp": 1788884105.9446745,
+        "timestamp_ms": 1788884105944.67,
+        "iso_time": "21:45:05.944",
+        "type": "STATE_CHANGED",
+        "generationId": "GEN-014",
+        "source": "user",
+        "severity": "INFO",
+        "payload": {
+          "previous_state": "SPEAKING",
+          "new_state": "INTERRUPTING",
+          "trigger": "user_interruption"
+        }
+      },
+      {
+        "id": "EVT-00008",
+        "timestamp": 1788884105.9446967,
+        "timestamp_ms": 1788884105944.7,
+        "iso_time": "21:45:05.944",
+        "type": "AUDIO_CANCEL_REQUESTED",
+        "generationId": "GEN-014",
+        "source": "generation_fence",
+        "severity": "CRITICAL",
+        "payload": {
+          "target_generation": "GEN-014"
+        }
+      },
+      {
+        "id": "EVT-00009",
+        "timestamp": 1788884105.9447286,
+        "timestamp_ms": 1788884105944.73,
+        "iso_time": "21:45:05.944",
+        "type": "AUDIO_CANCELLED",
+        "generationId": "GEN-014",
+        "source": "audio_engine",
+        "severity": "CRITICAL",
+        "payload": {
+          "cancelled_generation": "GEN-014",
+          "stopped_text": "Continue toward the next crossing. The path ahead appears clear...",
+          "cutoff_latency_ms": 0.24
+        }
+      },
+      {
+        "id": "EVT-00010",
+        "timestamp": 1788884105.9447477,
+        "timestamp_ms": 1788884105944.75,
+        "iso_time": "21:45:05.944",
+        "type": "TTS_INTERRUPTED",
+        "generationId": "GEN-014",
+        "source": "audio_engine",
+        "severity": "CRITICAL",
+        "payload": {
+          "invalidated_generation": "GEN-014",
+          "stopped_text": "Continue toward the next crossing. The path ahead appears clear...",
+          "interrupt_to_stop_ms": 0.24
+        }
+      },
+      {
+        "id": "EVT-00011",
+        "timestamp": 1788884105.944765,
+        "timestamp_ms": 1788884105944.77,
+        "iso_time": "21:45:05.944",
+        "type": "AUDIO_QUEUE_FLUSHED",
+        "generationId": "GEN-014",
+        "source": "audio_engine",
+        "severity": "CRITICAL",
+        "payload": {
+          "flushed_generation": "GEN-014"
+        }
+      },
+      {
+        "id": "EVT-00012",
+        "timestamp": 1788884105.944782,
+        "timestamp_ms": 1788884105944.78,
+        "iso_time": "21:45:05.944",
+        "type": "GENERATION_INVALIDATED",
+        "generationId": "GEN-014",
+        "source": "generation_fence",
+        "severity": "CRITICAL",
+        "payload": {
+          "invalidated_generation": "GEN-014",
+          "reason": "USER_INTERRUPTION"
+        }
+      },
+      {
+        "id": "EVT-00013",
+        "timestamp": 1788884105.9448044,
+        "timestamp_ms": 1788884105944.8,
+        "iso_time": "21:45:05.944",
+        "type": "NEW_GENERATION_CREATED",
+        "generationId": "GEN-015",
+        "source": "generation_fence",
+        "severity": "INFO",
+        "payload": {
+          "previous_generation": "GEN-014",
+          "new_generation": "GEN-015",
+          "reason": "interruption_recovery"
+        }
+      },
+      {
+        "id": "EVT-00014",
+        "timestamp": 1788884105.944824,
+        "timestamp_ms": 1788884105944.82,
+        "iso_time": "21:45:05.944",
+        "type": "GENERATION_CREATED",
+        "generationId": "GEN-015",
+        "source": "generation_fence",
+        "severity": "INFO",
+        "payload": {
+          "previous_generation": "GEN-014",
+          "new_generation": "GEN-015",
+          "reason": "interruption_recovery"
+        }
+      },
+      {
+        "id": "EVT-00015",
+        "timestamp": 1788884105.9448464,
+        "timestamp_ms": 1788884105944.85,
+        "iso_time": "21:45:05.944",
+        "type": "STATE_CHANGED",
+        "generationId": "GEN-015",
+        "source": "agent",
+        "severity": "INFO",
+        "payload": {
+          "previous_state": "INTERRUPTING",
+          "new_state": "RECOVERING",
+          "active_generation": "GEN-015"
+        }
+      },
+      {
+        "id": "EVT-00016",
+        "timestamp": 1788884105.9448638,
+        "timestamp_ms": 1788884105944.86,
+        "iso_time": "21:45:05.944",
+        "type": "RECOVERY_STARTED",
+        "generationId": "GEN-015",
+        "source": "generation_fence",
+        "severity": "INFO",
+        "payload": {
+          "recovering_generation": "GEN-015"
+        }
+      },
+      {
+        "id": "EVT-00017",
+        "timestamp": 1788884105.9448938,
+        "timestamp_ms": 1788884105944.89,
+        "iso_time": "21:45:05.944",
+        "type": "STALE_RESULT_RECEIVED",
+        "generationId": "GEN-014",
+        "source": "tool",
+        "severity": "WARNING",
+        "payload": {
+          "op_id": "op_sensor_crosswalk_check",
+          "target_generation": "GEN-014",
+          "current_generation": "GEN-015",
+          "result": {
+            "optical_status": "CLEAR",
+            "latency_ms": 320
+          }
+        }
+      },
+      {
+        "id": "EVT-00018",
+        "timestamp": 1788884105.9449122,
+        "timestamp_ms": 1788884105944.91,
+        "iso_time": "21:45:05.944",
+        "type": "STALE_RESULT_REJECTED",
+        "generationId": "GEN-014",
+        "source": "generation_fence",
+        "severity": "CRITICAL",
+        "payload": {
+          "op_id": "op_sensor_crosswalk_check",
+          "rejected_generation": "GEN-014",
+          "active_generation": "GEN-015",
+          "action": "SPEECH_SUPPRESSED_DISCARDED",
+          "reason": "Obsolete conversational state fenced by EchoGuard"
+        }
+      },
+      {
+        "id": "EVT-00019",
+        "timestamp": 1788884105.9449413,
+        "timestamp_ms": 1788884105944.94,
+        "iso_time": "21:45:05.944",
+        "type": "RECOVERY_COMPLETED",
+        "generationId": "GEN-015",
+        "source": "generation_fence",
+        "severity": "RECOVERY",
+        "payload": {
+          "active_generation": "GEN-015",
+          "recovery_duration_ms": 0.46,
+          "resolution": "SUCCESS"
+        }
+      },
+      {
+        "id": "EVT-00020",
+        "timestamp": 1788884105.944961,
+        "timestamp_ms": 1788884105944.96,
+        "iso_time": "21:45:05.944",
+        "type": "STATE_CHANGED",
+        "generationId": "GEN-015",
+        "source": "rime",
+        "severity": "INFO",
+        "payload": {
+          "previous_state": "RECOVERING",
+          "new_state": "SPEAKING"
+        }
+      },
+      {
+        "id": "EVT-00021",
+        "timestamp": 1788884105.9449801,
+        "timestamp_ms": 1788884105944.98,
+        "iso_time": "21:45:05.944",
+        "type": "TTS_STARTED",
+        "generationId": "GEN-015",
+        "source": "Rime",
+        "severity": "INFO",
+        "payload": {
+          "text": "Stop. Vehicle approaching. Wait until the crossing is clear.",
+          "provider": "Rime"
+        }
+      },
+      {
+        "id": "EVT-00022",
+        "timestamp": 1788884105.9449966,
+        "timestamp_ms": 1788884105945.0,
+        "iso_time": "21:45:05.944",
+        "type": "TTS_STREAMING",
+        "generationId": "GEN-015",
+        "source": "Rime",
+        "severity": "INFO",
+        "payload": {
+          "text": "Stop. Vehicle approaching. Wait until the crossing is clear.",
+          "status": "streaming"
+        }
+      }
+    ]
+  },
+  {
     "incidentId": "INC-0085",
     "timestamp": 1788883378.362134,
     "trigger": "VOICE INTERRUPTION",

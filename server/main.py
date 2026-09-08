@@ -695,3 +695,11 @@ frontend_dist = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist"
 if os.path.exists(frontend_dist):
     app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
 
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    host = os.environ.get("HOST", "0.0.0.0")
+    uvicorn.run("server.main:app", host=host, port=port, reload=False)
+
+

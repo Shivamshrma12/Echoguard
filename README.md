@@ -297,7 +297,50 @@ npm run dev
 
 ---
 
-## 17. Preflight Verification & Hygiene Check
+## 17. Public Cloud Deployment
+
+EchoGuard is production-ready for immediate public HTTPS deployment on cloud container/service providers.
+
+### Recommended Platform: Render.com (Web Service)
+
+**Why Render:**
+- **Zero-Build UI Serving:** `frontend/dist` is included directly in the repository; FastAPI serves the compiled static SPA natively from `/` without requiring a Node.js runtime on the cloud host.
+- **WebSocket & Audio Streaming:** Full support for persistent WebSockets (`/api/ws/telemetry`) and streaming chunked audio responses (`/api/tts/audio`).
+- **Free Automatic SSL/TLS:** Delivers a secure `https://<your-app>.onrender.com` domain required by modern browsers for Web Audio / Microphone permissions.
+
+### Exact Cloud Deployment Configuration
+
+- **Environment:** `Python 3`
+- **Build Command:**
+  ```bash
+  pip install -r requirements.txt
+  ```
+- **Start Command (reads `$PORT` from environment, binds to `0.0.0.0`):**
+  ```bash
+  uvicorn server.main:app --host 0.0.0.0 --port $PORT
+  ```
+- **Included Deployment Files:**
+  - `Procfile` (`web: uvicorn server.main:app --host 0.0.0.0 --port $PORT`)
+  - Server entrypoint: `server/main.py` automatically binds to `os.environ.get("PORT", 8000)` and `os.environ.get("HOST", "0.0.0.0")`.
+
+### Required Cloud Environment Variables
+
+In your cloud provider dashboard (e.g. Render Dashboard $\rightarrow$ Environment):
+
+| Variable Name | Required | Description | Example / Placeholder |
+| :--- | :--- | :--- | :--- |
+| `RIME_API_KEY` | **YES** | Official Rime API key for live speech synthesis | `rime_live_...` |
+| `GEMINI_API_KEY` | Optional | Google Gemini Flash key for dynamic LLM generation | `AIzaSy...` |
+| `LIVEKIT_URL` | Optional | LiveKit WebRTC server endpoint | `wss://...livekit.cloud` |
+| `LIVEKIT_API_KEY` | Optional | LiveKit API Key (kept strictly server-side) | `API...` |
+| `LIVEKIT_API_SECRET` | Optional | LiveKit API Secret (kept strictly server-side) | `secret...` |
+| `RIME_MODEL` | Default | Production neural synthesis model | `coda` |
+| `RIME_SPEAKER` | Default | Active conversational voice | `celeste` |
+
+
+---
+
+## 18. Preflight Verification & Hygiene Check
 
 Run the comprehensive preflight check to verify secret safety, .gitignore hygiene, Rime live catalog configuration, live synthesis probe, and invariant tests in one command:
 
@@ -307,7 +350,7 @@ python scripts/preflight_check.py
 
 ---
 
-## 18. Testing & Invariant Proofs
+## 19. Testing & Invariant Proofs
 
 Run the automated test suite with pytest:
 
@@ -332,7 +375,7 @@ assert fence._audio_queue_active is False
 
 ---
 
-## 19. Measured Performance & Latency Breakdown
+## 20. Measured Performance & Latency Breakdown
 
 To ensure full transparency (truth-in-advertising), measurements are categorized by cached vs uncached and runtime vs acoustic transducers:
 
@@ -347,7 +390,7 @@ To ensure full transparency (truth-in-advertising), measurements are categorized
 
 ---
 
-## 20. Limitations
+## 21. Limitations
 
 - EchoGuard is a prototype demonstrating deterministic stale-result fencing. It does **not** claim safety certification or guarantee zero accident risk in industrial deployments without hardware watchdog integration.
 - In environments without live microphone permissions or live WebRTC connectivity, acoustic data is labelled as `EVENT RECONSTRUCTION`.
@@ -355,16 +398,17 @@ To ensure full transparency (truth-in-advertising), measurements are categorized
 
 ---
 
-## 20. AI-Assisted Development Disclosure
+## 22. AI-Assisted Development Disclosure
 
 Developed with agentic assistance from Antigravity IDE (Google DeepMind) for architectural scaffolding, testing harness design, and UI component synthesis.
 
 ---
 
-## 21. Third-Party Licenses
+## 23. Third-Party Licenses
 
 - **LiveKit Agents & Client:** Apache 2.0
 - **LiveKit Rime Plugin:** Apache 2.0
 - **FastAPI / Starlette:** MIT License
 - **Lucide Icons:** ISC License
 - **Tailwind CSS:** MIT License
+
