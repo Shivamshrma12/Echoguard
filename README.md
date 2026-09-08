@@ -349,7 +349,7 @@ To ensure full transparency (truth-in-advertising), measurements are categorized
 
 ## 20. Limitations
 
-- EchoGuard is a hackathon prototype demonstrating deterministic stale-result fencing. It does **not** claim safety certification or guarantee zero accident risk in industrial deployments without hardware watchdog integration.
+- EchoGuard is a prototype demonstrating deterministic stale-result fencing. It does **not** claim safety certification or guarantee zero accident risk in industrial deployments without hardware watchdog integration.
 - In environments without live microphone permissions or live WebRTC connectivity, acoustic data is labelled as `EVENT RECONSTRUCTION`.
 - Acoustic stop latency measurements reflect runtime buffer invalidation and dispatch; actual transducer cessation depends on local hardware audio buffers.
 
