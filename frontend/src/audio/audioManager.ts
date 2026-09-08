@@ -16,6 +16,12 @@ export class AudioManager {
   private accumulatedSpeech: string = '';
   private audioElement: HTMLAudioElement | null = null;
   private shouldBeListening: boolean = false;
+  private currentPlayId: number = 0;
+  private playbackStartTime: number = 0;
+
+  private vadInterval: any = null;
+  private consecutiveVoiceFrames: number = 0;
+  private watchdogInterval: any = null;
 
   public async startMicrophone(): Promise<boolean> {
     try {
@@ -54,6 +60,14 @@ export class AudioManager {
   }
 
   public stopMicrophone(): void {
+    if (this.vadInterval) {
+      clearInterval(this.vadInterval);
+      this.vadInterval = null;
+    }
+    if (this.watchdogInterval) {
+      clearInterval(this.watchdogInterval);
+      this.watchdogInterval = null;
+    }
     if (this.micStream) {
       this.micStream.getTracks().forEach((t) => t.stop());
       this.micStream = null;
@@ -66,11 +80,13 @@ export class AudioManager {
   }
 
   /**
-   * Starts browser speech recognition with immediate interrupt handling and continuous listening
+   * Starts browser speech recognition with immediate interrupt handling,
+   * continuous listening, and real-time acoustic VAD barge-in.
    */
   public startListening(
     onResult: (text: string) => void,
     onSpeechStart?: () => void,
+    onBargeIn?: () => void,
     onError?: (err: any) => void
   ): boolean {
     const SpeechRecognition =
@@ -81,6 +97,57 @@ export class AudioManager {
     }
 
     this.shouldBeListening = true;
+
+    // Trigger barge-in: cancel Rime playback immediately in 0ms without destroying speech buffer
+    const triggerBargeIn = (source: string) => {
+      if (this.isSpeaking) {
+        console.log(`[EchoGuard] Automatic Barge-In triggered via ${source}! Cancelling Rime speech output.`);
+        this.flushAudioOnly();
+        if (onBargeIn) {
+          onBargeIn();
+        } else if (onSpeechStart) {
+          onSpeechStart();
+        }
+      }
+    };
+
+    // Continuous Real-Time Acoustic VAD Loop (runs every 25ms over echo-cancelled stream)
+    if (this.vadInterval) clearInterval(this.vadInterval);
+    this.vadInterval = setInterval(() => {
+      if (!this.isSpeaking || !this.analyser || !this.isMicActive) {
+        this.consecutiveVoiceFrames = 0;
+        return;
+      }
+
+      // Allow 150ms after playback start for browser hardware AEC filter to converge
+      if (Date.now() - this.playbackStartTime < 150) {
+        return;
+      }
+
+      const buffer = new Uint8Array(this.analyser.frequencyBinCount);
+      this.analyser.getByteFrequencyData(buffer);
+
+      // Human speech frequency band (bins 3 to 20 correspond to ~350Hz - 3600Hz)
+      let voiceEnergy = 0;
+      const minBin = 3;
+      const maxBin = Math.min(20, buffer.length - 1);
+      for (let i = minBin; i <= maxBin; i++) {
+        voiceEnergy += buffer[i];
+      }
+      const avgVoiceEnergy = voiceEnergy / (maxBin - minBin + 1);
+
+      // Distinct human voice energy threshold above noise/echo-cancelled baseline
+      if (avgVoiceEnergy > 42) {
+        this.consecutiveVoiceFrames++;
+        if (this.consecutiveVoiceFrames >= 2) {
+          // Sustained human speech detected during agent speech
+          triggerBargeIn('vad_acoustic');
+          this.consecutiveVoiceFrames = 0;
+        }
+      } else {
+        this.consecutiveVoiceFrames = 0;
+      }
+    }, 25);
 
     try {
       if (this.recognition) {
@@ -93,19 +160,12 @@ export class AudioManager {
       rec.lang = 'en-US';
 
       rec.onspeechstart = () => {
-        // Instant Acoustic Cutoff: if agent is speaking, cut audio immediately (0ms)
-        if (this.isSpeaking) {
-          this.flushAudio();
-          if (onSpeechStart) onSpeechStart();
-        }
+        triggerBargeIn('speech_start');
+        if (onSpeechStart) onSpeechStart();
       };
 
       rec.onresult = (event: any) => {
-        // If agent was still producing audio, cut it instantly
-        if (this.isSpeaking) {
-          this.flushAudio();
-          if (onSpeechStart) onSpeechStart();
-        }
+        triggerBargeIn('speech_result');
 
         let interim = '';
         let lastIsFinal = false;
@@ -122,8 +182,8 @@ export class AudioManager {
         const candidate = (this.accumulatedSpeech + ' ' + interim).trim();
         if (!candidate) return;
 
-        // Fast debounce: 220ms when speech is finalized, 400ms for pauses
-        const debounceMs = lastIsFinal ? 220 : 400;
+        // Optimized fast debounce: 150ms when finalized, 350ms on pauses
+        const debounceMs = lastIsFinal ? 150 : 350;
 
         if (this.silenceTimer) {
           clearTimeout(this.silenceTimer);
@@ -138,7 +198,7 @@ export class AudioManager {
       };
 
       rec.onerror = (e: any) => {
-        // Ignore expected silence timeouts from browser engine
+        // Ignore expected silence timeouts
         if (e.error === 'no-speech' || e.error === 'aborted') {
           return;
         }
@@ -147,22 +207,35 @@ export class AudioManager {
       };
 
       rec.onend = () => {
-        // Browser SpeechRecognition automatically cuts off after pauses; auto-restart if active
+        // Continuous listening: restart immediately if session is active
         if (this.shouldBeListening) {
           setTimeout(() => {
-            if (this.shouldBeListening) {
+            if (this.shouldBeListening && this.recognition) {
               try {
-                rec.start();
+                this.recognition.start();
               } catch (e) {
                 // Ignore if already starting
               }
             }
-          }, 200);
+          }, 60);
         }
       };
 
       rec.start();
       this.recognition = rec;
+
+      // Watchdog interval to ensure recognition is never permanently dead
+      if (this.watchdogInterval) clearInterval(this.watchdogInterval);
+      this.watchdogInterval = setInterval(() => {
+        if (this.shouldBeListening && this.recognition) {
+          try {
+            this.recognition.start();
+          } catch (e) {
+            // Already active
+          }
+        }
+      }, 1200);
+
       return true;
     } catch (e) {
       console.warn('Could not start speech recognition:', e);
@@ -172,6 +245,14 @@ export class AudioManager {
 
   public stopListening(): void {
     this.shouldBeListening = false;
+    if (this.vadInterval) {
+      clearInterval(this.vadInterval);
+      this.vadInterval = null;
+    }
+    if (this.watchdogInterval) {
+      clearInterval(this.watchdogInterval);
+      this.watchdogInterval = null;
+    }
     if (this.silenceTimer) {
       clearTimeout(this.silenceTimer);
       this.silenceTimer = null;
@@ -189,14 +270,15 @@ export class AudioManager {
 
   /**
    * Speaks the response through a single dedicated Rime TTS audio channel.
-   * Guaranteed not to hang voice state.
+   * Cancels prior speech output in 0ms without erasing user input buffers.
    */
   public async speak(
     text: string,
     onStart?: () => void,
     onEnd?: () => void
   ): Promise<void> {
-    this.flushAudio();
+    this.flushAudioOnly();
+    const playId = ++this.currentPlayId;
     this.isSpeaking = true;
 
     if (!this.audioElement) {
@@ -208,15 +290,16 @@ export class AudioManager {
     let hasEnded = false;
 
     const notifyStart = () => {
-      if (!hasStarted) {
+      if (!hasStarted && playId === this.currentPlayId) {
         hasStarted = true;
         this.isSpeaking = true;
+        this.playbackStartTime = Date.now();
         if (onStart) onStart();
       }
     };
 
     const notifyEnd = () => {
-      if (!hasEnded) {
+      if (!hasEnded && playId === this.currentPlayId) {
         hasEnded = true;
         this.isSpeaking = false;
         if (onEnd) onEnd();
@@ -225,14 +308,20 @@ export class AudioManager {
 
     // Reset handlers
     audio.onplay = () => {
+      if (playId !== this.currentPlayId) {
+        try { audio.pause(); } catch {}
+        return;
+      }
       notifyStart();
     };
 
     audio.onended = () => {
+      if (playId !== this.currentPlayId) return;
       notifyEnd();
     };
 
     audio.onerror = (e) => {
+      if (playId !== this.currentPlayId) return;
       console.warn('Rime audio load notice, falling back to speech synthesis:', e);
       this.fallbackSpeak(text, notifyStart, notifyEnd);
     };
@@ -242,14 +331,19 @@ export class AudioManager {
 
     try {
       await audio.play();
+      if (playId !== this.currentPlayId) {
+        try { audio.pause(); } catch {}
+        return;
+      }
     } catch (err: any) {
-      if (err.name === 'AbortError') {
+      if (err.name === 'AbortError' || playId !== this.currentPlayId) {
         return;
       }
       console.warn('Audio play notice, falling back to speech synthesis:', err);
       this.fallbackSpeak(text, notifyStart, notifyEnd);
     }
   }
+
 
   private fallbackSpeak(
     text: string,
@@ -280,6 +374,7 @@ export class AudioManager {
 
     utterance.onstart = () => {
       this.isSpeaking = true;
+      this.playbackStartTime = Date.now();
       if (onStart) onStart();
     };
 
@@ -300,26 +395,40 @@ export class AudioManager {
   }
 
   /**
+   * Non-destructive acoustic flush:
+   * Instantly silences audio playback in 0ms without clearing accumulated user speech buffers.
+   */
+  public flushAudioOnly(): void {
+    this.currentPlayId++;
+    this.isSpeaking = false;
+    if (this.audioElement) {
+      try {
+        this.audioElement.pause();
+        this.audioElement.removeAttribute('src');
+        this.audioElement.load();
+      } catch (e) {}
+    }
+    if ('speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch (e) {}
+    }
+    this.currentUtterance = null;
+  }
+
+  /**
    * Deterministic 0ms Acoustic Cutoff:
    * Instantly pauses audio, removes source, and purges hardware buffer.
    */
   public flushAudio(): void {
-    this.isSpeaking = false;
+    this.flushAudioOnly();
     if (this.silenceTimer) {
       clearTimeout(this.silenceTimer);
       this.silenceTimer = null;
     }
     this.accumulatedSpeech = '';
-    if (this.audioElement) {
-      this.audioElement.pause();
-      this.audioElement.removeAttribute('src');
-      this.audioElement.load(); // Purges audio pipeline buffer instantly
-    }
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
-    this.currentUtterance = null;
   }
+
 
   public getWaveformData(state: string, binCount: number = 64): { data: number[]; isAcoustic: boolean } {
     if (this.isMicActive && this.analyser && (state === 'LISTENING' || state === 'SPEAKING')) {

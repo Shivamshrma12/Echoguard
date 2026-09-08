@@ -137,6 +137,30 @@ export function App() {
     }
   };
 
+  // Automatic Barge-In Handler (Triggered seamlessly on speech onset/VAD without clicking any button)
+  const handleAutomaticBargeIn = async () => {
+    // 1. Instantly silence Rime audio playback in 0ms without erasing user's incoming utterance
+    audioManager.flushAudioOnly();
+    setActiveSpeechText('');
+    setVoiceState('LISTENING');
+
+    // 2. Invalidate obsolete generation on server fence immediately
+    try {
+      const res = await fetch('/api/session/interrupt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ utterance: 'Automatic speech barge-in' }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setGenerationId(data.newGeneration);
+        fetchIncidents();
+      }
+    } catch (err) {
+      console.error('Barge-in fence invalidation notice:', err);
+    }
+  };
+
   // Start Live Session with real speech recognition
   const handleStartSession = async () => {
     const micGranted = await audioManager.startMicrophone();
@@ -144,18 +168,22 @@ export function App() {
     setIsSessionActive(true);
     setVoiceState('LISTENING');
 
-    // Start browser speech recognition
+    // Start browser speech recognition with continuous listening and automatic barge-in
     audioManager.startListening(
       (transcript) => {
         handleUserSpeechQuery(transcript);
       },
       () => {
-        // Speech started: if agent was speaking, interrupt immediately!
+        // Speech onset: if agent is currently speaking, barge-in automatically!
         if (voiceStateRef.current === 'SPEAKING' || audioManager.isSpeaking) {
-          handleInterrupt();
+          handleAutomaticBargeIn();
         } else {
           setVoiceState('LISTENING');
         }
+      },
+      () => {
+        // Acoustic VAD triggered barge-in during Rime speech
+        handleAutomaticBargeIn();
       }
     );
 
