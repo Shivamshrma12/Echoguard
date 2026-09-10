@@ -361,7 +361,7 @@ app.add_middleware(
 @app.get("/api/status")
 async def get_status():
     """Returns complete real-time status of EchoGuard core and connected providers."""
-    rime_cfg = rime_service.get_config()
+    rime_cfg = rime_service.get_browser_config()
     return {
         "service": "EchoGuard Voice Reliability Engine",
         "state": fence.state.value,
@@ -916,7 +916,7 @@ async def get_evidence():
             "staleLeaks": 0,
             "criteria": "When Generation N is interrupted, audio must halt immediately, delayed Generation N tool results must be rejected with zero leakage into TTS, and Generation N+1 must recover cleanly."
         },
-        "rimeConfiguration": rime_service.get_config().model_dump(),
+        "rimeConfiguration": rime_service.get_browser_config().model_dump(),
         "livekitConfiguration": {
             "configured": token_service.is_configured,
             "url": token_service.livekit_url,
@@ -941,7 +941,7 @@ async def websocket_telemetry(websocket: WebSocket):
             "generationId": fence.current_generation_id,
             "invalidatedGenerations": list(fence.invalidated_generations),
             "metrics": fence.metrics.model_dump(),
-            "rime": rime_service.get_config().model_dump(),
+            "rime": rime_service.get_browser_config().model_dump(),
             "events": [e.model_dump() for e in recorder.events[-30:]]
         }
         await websocket.send_text(json.dumps(snapshot))

@@ -57,6 +57,37 @@ class RimeProviderService:
             isSynthetic=False
         )
 
+    def get_browser_config(self) -> RimeProviderConfig:
+        """
+        Returns accurate runtime configuration for the browser production path:
+        HTTP REST streaming endpoint with MP3 audio playback at 22050Hz.
+        """
+        has_key = bool(self.api_key and not self.api_key.startswith("your_"))
+        if not has_key:
+            status_text = "NOT CONFIGURED"
+        elif self.probe_error:
+            status_text = "CONNECTION FAILED"
+        elif self.is_connected:
+            status_text = "LIVE"
+        else:
+            status_text = "CONFIGURED"
+
+        return RimeProviderConfig(
+            configured=has_key,
+            connected=self.is_connected,
+            provider="Rime",
+            model=self.model,
+            speaker=self.speaker,
+            language="en",
+            transport="REST/HTTP",
+            audioFormat="MP3",
+            sampleRate=22050,
+            segmentation=self.segmentation,
+            endpoint=self.rest_endpoint,
+            statusText=status_text,
+            isSynthetic=False
+        )
+
     def create_livekit_tts(self):
         """
         Instantiates official LiveKit Rime TTS plugin with current configuration.

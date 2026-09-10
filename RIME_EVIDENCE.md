@@ -134,9 +134,9 @@ Shipped production configuration:
 - **Language:** `en` (`eng`)
 - **Web Runtime Endpoint:** `https://users.rime.ai/v1/rime-tts` (REST with persistent HTTP connection pool)
 - **Worker Endpoint:** `wss://users-ws.rime.ai/ws3` (WebSocket via `livekit-plugins-rime`)
-- **Audio Format:** `audio/mpeg` (MP3) in browser web application / `PCM 16kHz` in agent worker
+- **Audio Format:** `audio/mpeg` (MP3, 22050Hz) in browser web application / `PCM 16kHz` in agent worker
 - **Segmentation:** `bySentence`
-- **Transport:** Direct Rime Audio Stream (HTTP chunked streaming in web app with client-side buffer flush; WebSocket in LiveKit worker)
+- **Transport:** REST/HTTP in browser web application (with 0.13ms client-side software buffer flush); WebSocket in separate LiveKit worker
 
 ---
 

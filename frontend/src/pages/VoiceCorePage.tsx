@@ -63,7 +63,7 @@ export const VoiceCorePage: React.FC<VoiceCorePageProps> = ({
   onSelectIncident,
   onOpenChaosLab,
   onSendQuery,
-  selectedVoice = 'rime-tts-mist-v3',
+  selectedVoice = 'coda:celeste',
   onSelectVoice,
 }) => {
   const [activeBottomTab, setActiveBottomTab] = useState<'timeline' | 'waveform' | 'flow'>('timeline');

@@ -138,13 +138,18 @@ export const EvidencePage: React.FC = () => {
         </div>
       </div>
 
-      {/* 3. Reproducible Rime & LiveKit Active Configuration */}
+      {/* 3. Reproducible Rime Active Configuration */}
       <div className="p-6 rounded-2xl bg-[#090f1d] border border-white/8 font-mono space-y-4">
-        <div className="text-[10px] text-indigo-400 uppercase tracking-widest font-bold">
-          SECTION 03: ACTIVE RUNTIME CONFIGURATION
+        <div className="flex items-center justify-between pb-3 border-b border-white/6">
+          <div className="text-[10px] text-indigo-400 uppercase tracking-widest font-bold">
+            SECTION 03: ACTIVE BROWSER RUNTIME CONFIGURATION
+          </div>
+          <span className="text-[10px] text-slate-400">
+            Shipped Web Production Path
+          </span>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
           <div className="p-3 rounded-xl bg-black/40 border border-white/6">
             <span className="text-[10px] text-slate-400">RIME MODEL</span>
             <div className="text-white font-bold mt-0.5">{evidenceData?.rimeConfiguration?.model || 'coda'}</div>
@@ -154,15 +159,28 @@ export const EvidencePage: React.FC = () => {
             <div className="text-white font-bold mt-0.5">{evidenceData?.rimeConfiguration?.speaker || 'celeste'}</div>
           </div>
           <div className="p-3 rounded-xl bg-black/40 border border-white/6">
+            <span className="text-[10px] text-slate-400">LANGUAGE</span>
+            <div className="text-white font-bold mt-0.5">{evidenceData?.rimeConfiguration?.language || 'en'}</div>
+          </div>
+          <div className="p-3 rounded-xl bg-black/40 border border-white/6">
             <span className="text-[10px] text-slate-400">AUDIO FORMAT / RATE</span>
             <div className="text-white font-bold mt-0.5">
-              {evidenceData?.rimeConfiguration?.audioFormat || 'PCM'} {evidenceData?.rimeConfiguration?.sampleRate || 16000}Hz
+              {evidenceData?.rimeConfiguration?.audioFormat || 'MP3'} {evidenceData?.rimeConfiguration?.sampleRate || 22050}Hz
             </div>
           </div>
           <div className="p-3 rounded-xl bg-black/40 border border-white/6">
             <span className="text-[10px] text-slate-400">TRANSPORT</span>
-            <div className="text-white font-bold mt-0.5">{evidenceData?.rimeConfiguration?.transport || 'WebSocket'}</div>
+            <div className="text-white font-bold mt-0.5">{evidenceData?.rimeConfiguration?.transport || 'REST/HTTP'}</div>
           </div>
+          <div className="p-3 rounded-xl bg-black/40 border border-white/6">
+            <span className="text-[10px] text-slate-400">ENDPOINT</span>
+            <div className="text-cyan-400 font-bold mt-0.5 truncate text-[11px]" title={evidenceData?.rimeConfiguration?.endpoint || 'https://users.rime.ai/v1/rime-tts'}>
+              {evidenceData?.rimeConfiguration?.endpoint || 'https://users.rime.ai/v1/rime-tts'}
+            </div>
+          </div>
+        </div>
+        <div className="text-[10px] text-slate-500 pt-2 border-t border-white/[0.04]">
+          Note: Separate headless LiveKit worker (agent/main.py) uses Rime WebSocket streaming (wss://users-ws.rime.ai/ws3) with PCM 16kHz audio.
         </div>
       </div>
 

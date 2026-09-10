@@ -114,10 +114,10 @@ class RimeProviderConfig(BaseModel):
     model: str = "coda"
     speaker: str = "celeste"
     language: str = "en"
-    transport: str = "WebSocket"
-    audioFormat: str = "PCM"
-    sampleRate: int = 16000
+    transport: str = "REST/HTTP"
+    audioFormat: str = "MP3"
+    sampleRate: int = 22050
     segmentation: str = "bySentence"
-    endpoint: str = "wss://users.rime.ai/v1/rime-tts"
+    endpoint: str = "https://users.rime.ai/v1/rime-tts"
     statusText: str = "NOT CONFIGURED" # "NOT CONFIGURED", "CONNECTION FAILED", "LIVE"
     isSynthetic: bool = False

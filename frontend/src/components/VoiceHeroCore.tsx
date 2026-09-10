@@ -264,7 +264,7 @@ export const VoiceHeroCore: React.FC<VoiceHeroCoreProps> = ({
             {state === 'INTERRUPTING'
               ? 'Audio buffer flushed • Generation invalidated • Stale results fenced'
               : state === 'SPEAKING'
-              ? activeSpeechText || 'Streaming PCM 16kHz via WebSocket'
+              ? activeSpeechText || 'Rime coda / celeste — MP3 audio stream'
               : isAcousticInput
               ? 'Acoustic microphone capture connected'
               : 'Acoustic synthesis engine'}

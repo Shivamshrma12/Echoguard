@@ -122,8 +122,8 @@ In accordance with Rime's official production catalog:
 | **Language** | `en` (`eng`) | English |
 | **Endpoint (Web Runtime)** | `https://users.rime.ai/v1/rime-tts` | REST endpoint with HTTP connection pooling |
 | **Endpoint (Worker)** | `wss://users-ws.rime.ai/ws3` | WebSocket streaming endpoint via `livekit-plugins-rime` |
-| **Audio Format** | `audio/mpeg` (MP3) / `audio/pcm` (16kHz) | Direct browser `<audio>` playback |
-| **Transport** | Direct Rime Audio Stream | HTTP chunked proxy with client-side buffer flush |
+| **Audio Format** | `audio/mpeg` (MP3, 22050Hz) in web app / `audio/pcm` (16kHz) in worker | Direct browser `<audio>` playback |
+| **Transport** | REST/HTTP in browser web app; WebSocket in separate LiveKit worker | Direct Rime REST audio stream with 0.13ms client-side buffer flush |
 
 ---
 

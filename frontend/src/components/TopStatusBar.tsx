@@ -15,8 +15,8 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
   rimeConfig,
   onOpenSettings,
   brandTitle = 'EchoGuard',
-  brandSubtitle = 'Voice Reliability Control Center',
-  selectedModel = 'rime-tts-mist-v3',
+  brandSubtitle = 'Realtime Voice Reliability Infrastructure',
+  selectedModel = 'coda',
   onSelectModel,
 }) => {
   const [showRimeModal, setShowRimeModal] = useState<boolean>(false);
@@ -124,8 +124,8 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
                 </span>
               </div>
               <div className="flex justify-between p-2 rounded bg-black/30">
-                <span className="text-slate-400">WebSocket Endpoint:</span>
-                <span className="text-cyan-400 text-[11px] truncate max-w-[220px]">{rimeConfig.endpoint || 'wss://users-ws.rime.ai/ws3'}</span>
+                <span className="text-slate-400">Rime REST Endpoint:</span>
+                <span className="text-cyan-400 text-[11px] truncate max-w-[220px]">{rimeConfig.endpoint || 'https://users.rime.ai/v1/rime-tts'}</span>
               </div>
               <div className="flex justify-between p-2 rounded bg-black/30">
                 <span className="text-slate-400">Active Model:</span>
@@ -141,7 +141,10 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
               </div>
               <div className="flex justify-between p-2 rounded bg-black/30">
                 <span className="text-slate-400">Transport:</span>
-                <span className="text-white">Direct Rime Stream (HTTP/REST + WebSocket)</span>
+                <span className="text-white">Direct Rime Stream (HTTP/REST)</span>
+              </div>
+              <div className="p-2 rounded bg-black/20 text-[10px] text-slate-500 border border-white/[0.04]">
+                Note: Separate LiveKit worker uses Rime WebSocket/PCM
               </div>
             </div>
             <div className="flex justify-end pt-2">
