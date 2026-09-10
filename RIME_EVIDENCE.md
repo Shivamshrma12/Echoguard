@@ -2,7 +2,7 @@
 
 ## 1. Hard Voice Claim
 
-EchoGuard prevents obsolete conversational state from becoming obsolete spoken output via deterministic generation fencing, immediate audio buffer flushing (0.13 ms), and stale-result rejection.
+EchoGuard prevents obsolete conversational state from becoming obsolete spoken output via deterministic generation fencing, immediate software audio buffer flushing (0.13 ms), and stale-result rejection.
 
 ---
 
@@ -39,7 +39,7 @@ EchoGuard deterministically eliminates this failure mode.
 ## 5. Acceptance Test & Invariants
 
 The acceptance criteria require that:
-1. When user speech is detected during agent speech or thinking, active audio stops immediately (0.13 ms).
+1. When user speech is detected during agent speech or thinking, software playback cancellation executes immediately (0.13 ms software audio buffer flush; actual physical acoustic cessation depends on sound drivers/environment).
 2. The active Generation $N$ is immediately invalidated.
 3. Generation $N+1$ becomes the active generation.
 4. Any delayed LLM, tool, or audio request originating from Generation $N$ arriving after the interruption **must be strictly rejected**.
@@ -93,7 +93,7 @@ python server/test_general_purpose_verification.py
    -> Gemini retained conversation history and explained prime numbers simply (1168ms).
 4. Fencing Test:
    - Generation N (GEN-014): "Explain how black holes form."
-   - Interrupt: "No, forget that. Explain how earthquakes happen instead." (Cutoff: 0.13ms)
+   - Interrupt: "No, forget that. Explain how earthquakes happen instead." (Software audio buffer flush: 0.13ms)
    - Invalidation: GEN-014 invalidated -> GEN-015 created.
    - Stale Audio Fetch: GET /api/tts/audio?generationId=GEN-014 -> HTTP 410 Gone ({"error":"STALE_GENERATION"})
    - Stale Query Fetch: POST /api/chat/query {"generationId":"GEN-014"} -> {"status":"FENCED_REJECTED"}
@@ -114,7 +114,7 @@ All measurements collected from live runtime execution in this environment:
 
 | Metric | Measured Value | Classification | Method |
 | :--- | :--- | :--- | :--- |
-| **Acoustic Cutoff Latency** | **`0.13 ms`** | Uncached (Runtime Buffer) | Monotonic clock delta on hardware audio pause |
+| **Software Audio Buffer Flush** | **`0.13 ms`** | Uncached (Software Buffer) | Monotonic clock delta to pause playback & clear audio element buffers (physical acoustic decay depends on OS/room) |
 | **Generation Fence Invalidation** | **`0.02 ms`** | Uncached (Memory State) | Synchronous set insertion and generation rollover |
 | **Stale Result Rejection Gate** | **`0.10 ms`** | Uncached (Gateway Check) | Pre-synthesis gate check returning HTTP 410 |
 | **Gemini LLM Response Time** | **`731 ms – 1,168 ms`** | Uncached (HTTPS Network) | Live Gemini Flash Lite inference round-trip |

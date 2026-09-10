@@ -1,34 +1,26 @@
 # EchoGuard — Realtime Voice Reliability Infrastructure
 
-> **"When conversational intent changes mid-sentence, obsolete speech must never reach the user."**
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-Production-009688.svg)](https://fastapi.tiangolo.com)
+[![Rime TTS](https://img.shields.io/badge/Rime-coda%20%7C%20celeste-purple.svg)](https://rime.ai)
+[![Google Gemini](https://img.shields.io/badge/Google%20Gemini-Flash%20Lite-orange.svg)](https://deepmind.google/technologies/gemini/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-EchoGuard is a realtime voice reliability and generation-fencing layer that protects conversational voice AI systems from stale responses, interruption races, and obsolete audio playback.
-
----
-
-## 🌐 Project Links & Demo
-
-- **Live Deployment:** [https://echoguard-sskh.onrender.com/](https://echoguard-sskh.onrender.com/)
-- **GitHub Repository:** [https://github.com/Shivamshrma12/Echoguard](https://github.com/Shivamshrma12/Echoguard)
-- **Recorded Demo Video:** [`demo/EchoGuard_Demo.mp4`](demo/EchoGuard_Demo.mp4) (Complete recorded demonstration showing real-time voice barge-in, complete utterance capture, Rime neural voice delivery, and generation fencing under interruption)
+> **Live Deployment:** [https://echoguard-sskh.onrender.com/](https://echoguard-sskh.onrender.com/)  
+> **Source Repository:** [https://github.com/Shivamshrma12/Echoguard](https://github.com/Shivamshrma12/Echoguard)  
+> **Demonstration Video:** Included in package at `demo/EchoGuard_Demo.mp4`
 
 ---
 
-## 1. The Hard Voice Problem: Interruption Races & Stale Spoken State
+## 1. The Hard Voice Problem: Interruption & Stale Speech Races
 
-Voice is an ephemeral, linear, acoustic medium: **spoken words cannot be un-heard**. 
+In human conversation, speech is linear, continuous, and irreversible: **spoken words cannot be un-heard**. 
 
-In conventional voice AI pipelines, when a user speaks over an active response or changes their mind while backend reasoning or audio generation is in flight, a severe race condition occurs:
-1. The agent is speaking response $A$.
-2. The user naturally interrupts with query $B$.
-3. An in-flight background tool or delayed LLM token stream for $A$ finishes after the interruption.
-4. Without generation fencing, delayed audio packets for $A$ continue playing aloud into the room, speaking obsolete, contradictory, or unprompted answers over the user's new request.
-
-### Why a Simple "Stop" Button Is Not Enough
-A manual mute or pause button only halts physical speaker output in the moment. It does **not** protect the system architecture:
-- In-flight asynchronous tasks (LLM completion, cloud TTS synthesis, tool executions) continue running in background threads.
+In conventional voice AI pipelines, when a user interrupts an AI agent:
+- An LLM inference, tool call, or neural audio synthesis is already in flight.
+- Simply stopping local audio playback is **insufficient**: the in-flight cloud tasks continue running asynchronously in the background.
 - When those background tasks resolve, their delayed callbacks attempt to deliver audio to the output queue.
-- Without cryptographic or monotonic fencing, the agent remains vulnerable to race conditions and stale speech leaks.
+- Without cryptographic or monotonic fencing, the agent remains vulnerable to race conditions and stale speech leaks, producing obsolete speech over the user's new question.
 
 EchoGuard solves this problem fundamentally through **Deterministic Generation Fencing**.
 
@@ -39,7 +31,7 @@ EchoGuard solves this problem fundamentally through **Deterministic Generation F
 Every conversational turn in EchoGuard is assigned a monotonically increasing Generation ID (`GEN-014`):
 
 ```
-User Turn 1: "Tell me about the weather in Delhi."
+User Turn 1: "Explain how black holes form."
    ↓
 Generation Fence: GEN-014 assigned
    ↓
@@ -49,9 +41,9 @@ Rime synthesizes neural speech for GEN-014
    ↓
 Agent begins speaking aloud through Rime
    ↓
-[USER NATURALLY INTERRUPTS]: "No, stop. Tell me about Bangalore instead."
+[USER NATURALLY INTERRUPTS]: "No, forget that. Explain how earthquakes happen instead."
    ↓
-1. 0.13ms Hardware Acoustic Flush (Audio immediately silenced)
+1. 0.13ms Software Audio Buffer Flush (Browser playback paused and buffers cleared)
 2. GEN-014 added to Invalidated Generations Set
 3. GEN-015 created as active generation
    ↓
@@ -61,7 +53,7 @@ FENCE CHECK: GEN-014 != activeGeneration (GEN-015) or in invalidatedGenerations
    ↓
 STRICTLY REJECTED: HTTP 410 Gone / FENCED_REJECTED (0 Stale Leaks)
    ↓
-Gemini & Rime generate and speak ONLY for GEN-015 ("Bangalore is currently 28°C...")
+Gemini & Rime generate and speak ONLY for GEN-015 ("Earthquakes occur when tectonic plates...")
 ```
 
 ---
@@ -70,15 +62,15 @@ Gemini & Rime generate and speak ONLY for GEN-015 ("Bangalore is currently 28°C
 
 EchoGuard combines three core systems:
 1. **Google Gemini:** General-purpose conversational reasoning and multi-turn intelligence.
-2. **Rime TTS:** Primary neural voice synthesis engine.
+2. **Rime TTS:** Primary neural voice synthesis engine (`coda:celeste`).
 3. **EchoGuard Controller:** Realtime generation fencing, acoustic echo discrimination, automatic voice barge-in, and stale-result rejection.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                        BROWSER RUNTIME (React 19)                      │
+│                   BROWSER PRODUCTION RUNTIME (React 19)                │
 │  - Web Speech API continuous recognition with complete sentence capture │
 │  - Acoustic Echo Discrimination (filters laptop speaker feedback)      │
-│  - Automatic Voice Barge-In detector (0.13ms instant audio flush)      │
+│  - Automatic Voice Barge-In detector (0.13ms software buffer flush)   │
 │  - Client-Side Generation Fencing (drops stale audio element buffers)  │
 └───────────────────────────────────▲────────────────────────────────────┘
                                     │
@@ -101,9 +93,19 @@ EchoGuard combines three core systems:
 └──────────────────────────────────┘  └──────────────────────────────────┘
 ```
 
-### Runtime Details
-- **Shipped Web Runtime:** Browser microphone capture -> FastAPI gateway (`server/main.py`) -> Gemini Flash Lite -> Rime REST Audio Streaming (`https://users.rime.ai/v1/rime-tts`) with persistent connection pooling.
-- **Headless LiveKit Worker (`agent/main.py`):** Standalone WebRTC agent built with `livekit-agents` and `livekit-plugins-rime` streaming audio over WebSocket (`wss://users-ws.rime.ai/ws3`).
+### Two Distinct Architecture Paths
+
+1. **Browser Production / Demo Path (Shipped Web Application):**
+   - **Flow:** Browser microphone → Web Speech API → FastAPI gateway (`server/main.py`) → Gemini 2.5 Flash Lite → Generation Fence Controller → Rime REST Audio Streaming (`https://users.rime.ai/v1/rime-tts`) → Browser Web Audio playback.
+   - **Audio Format:** `audio/mpeg` (MP3, 22050Hz).
+   - **Interruption Behavior:** User speech triggers immediate client-side `0.13ms` software audio buffer flush and issues generation invalidation to the gateway.
+   - **Deployment:** This is the active path powering the live Render web deployment and browser demonstration video.
+
+2. **Separate Headless LiveKit Worker Path (`agent/main.py`):**
+   - **Flow:** Standalone WebRTC agent worker built with `livekit-agents` and `livekit-plugins-rime` streaming audio over WebSocket (`wss://users-ws.rime.ai/ws3`).
+   - **Audio Format:** `audio/pcm` (16000Hz).
+   - **Deployment:** Optional headless backend worker requiring external LiveKit server credentials (`LIVEKIT_URL`); **not** used or required by the browser web demo.
+
 - **Secret Hygiene:** All API keys (`RIME_API_KEY`, `GEMINI_API_KEY`) remain strictly server-side and are never exposed to browser bundles.
 
 ---
@@ -131,7 +133,7 @@ All metrics represent real-time measurements in this environment (cached vs. unc
 
 | Operation / Metric | Measured Value | Classification | Verification Method |
 | :--- | :--- | :--- | :--- |
-| **Interruption → Audio Stop Latency** | **`0.13 ms`** | Uncached (Hardware Buffer) | Monotonic clock delta on acoustic cutoff |
+| **Software Audio Buffer Flush** | **`0.13 ms`** | Uncached (Software Buffer) | Monotonic clock delta to pause playback & clear audio element buffers (physical acoustic decay depends on OS/room) |
 | **Generation Fence Invalidation** | **`0.02 ms`** | Uncached (Memory State) | Synchronous set insertion and generation rollover |
 | **Stale Result Rejection Gate** | **`0.10 ms`** | Uncached (Gateway Check) | Gate check prior to audio synthesis / delivery |
 | **Gemini LLM Response Time** | **`731 ms – 1,168 ms`** | Uncached (HTTPS Network) | Live Gemini Flash Lite inference round-trip |
@@ -211,7 +213,7 @@ Verifies live Gemini generation across physics, coding, multi-turn follow-up, an
 ## 9. Limitations & Failure Behavior
 
 1. **In-Flight Remote Synthesis:** Rime's REST API generates the entire audio payload before returning. When a user interrupts while Rime is synthesizing, the gateway cannot cancel the HTTP connection already established with Rime's cloud server; instead, EchoGuard's generation fence catches the response upon return, marks it `STALE_RESULT_REJECTED`, and drops the bytes, returning `HTTP 410` so the audio never reaches the browser or speakers.
-2. **Acoustic Transducer Latency:** Software audio cancellation occurs in 0.13 ms; however, physical acoustic decay depends on OS sound drivers and room acoustics.
+2. **Acoustic Transducer Latency:** Software audio cancellation executes in 0.13 ms; however, physical acoustic dissipation depends on OS sound drivers and room acoustics.
 3. **Browser Microphone AEC:** Automatic barge-in uses browser Acoustic Echo Cancellation (AEC) and candidate token filtering. In environments with extreme speaker volume and no headphones, high acoustic reflection may momentarily delay barge-in threshold detection.
 
 ---
