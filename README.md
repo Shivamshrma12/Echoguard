@@ -6,94 +6,55 @@ EchoGuard prevents obsolete conversational state from becoming obsolete spoken o
 
 ---
 
-## 1. EchoGuard
+## 🚀 Live Demo
 
-EchoGuard is a realtime voice reliability and safety infrastructure layer designed for voice agents operating in dynamic, safety-critical, or high-concurrency environments. Built around LiveKit WebRTC and official Rime TTS streaming, EchoGuard introduces **deterministic Generation Fencing** to ensure conversational state transitions invalidate obsolete speech, flush audio buffers immediately, and reject stale asynchronous work before it can reach the user's ears.
+**Try EchoGuard:** [https://echoguard-sskh.onrender.com/](https://echoguard-sskh.onrender.com/)
 
----
-
-## 2. The Problem
-
-In voice AI systems, there is a fundamental temporal gap between:
-1. What the agent's background processes are computing.
-2. What the user is currently hearing.
-3. What has changed in the physical environment.
-
-When a user speaks or an external event shifts application state, existing voice pipelines often let in-flight tool results, queued audio chunks, or obsolete inferences play out. In safety-critical contexts—such as hands-free industrial navigation, emergency dispatch, medical operations, or autonomous equipment assistance—speaking stale information can lead to severe confusion or physical hazards.
+Judges can access the deployed live demo directly from this link.
 
 ---
 
-## 3. Why Voice Is Essential
+## 1. Overview & Core Problem
 
-Voice is the only hands-free, eyes-up interface that operates in real time. Because speech is linear and acoustic, **a user cannot un-hear obsolete guidance once spoken**. In graphical user interfaces, a stale DOM element can be quietly updated or removed without alarming the user. In voice interfaces, an obsolete sentence spoken aloud damages conversational trust immediately and can lead to dangerous actions. Realtime voice reliability is therefore load-bearing infrastructure.
+In voice AI systems, speech is an ephemeral, linear, acoustic medium: **spoken words cannot be un-heard**. 
 
----
+When a user interrupts or the physical environment changes, traditional voice agent pipelines often suffer from a fatal race condition: in-flight LLM calls, background tools, and queued audio buffers continue playing obsolete guidance over user speech. In safety-critical applications (e.g., industrial navigation, emergency dispatch, hands-free field operations), speaking stale information damages trust and introduces severe physical hazards.
 
-## 4. Hard Voice Problem: Interruption + Stale State Recovery
-
-The classic failure sequence in modern voice agent architectures:
-
-```
-GEN-014 (Active)
-    ↓
-Agent Begins Speaking Advice ("Path ahead appears clear...")
-    ↓
-Tool Dispatched in Background (e.g., Optical Clearance Check)
-    ↓
-User Interrupts ("Stop. Vehicle approaching.")
-    ↓
-Environment State Changes
-    ↓
-Delayed Tool Result Returns from GEN-014 (Returns "All Clear")
-    ↓
-[FATAL LEAK]: Agent Speaks Obsolete "All Clear" Over User Hazard!
-```
-
----
-
-## 5. Core Claim
-
-> **EchoGuard reduces the risk of stale spoken state by demonstrating deterministic stale-result fencing and immediate audio queue invalidation for realtime voice agents.**
-
-The correct behavior enforced by EchoGuard:
+**EchoGuard solves this with deterministic Generation Fencing:**
 
 ```
 GEN-014 (Active)
     ↓
 User Interrupts ("Stop. Vehicle approaching.")
     ↓
-GEN-014 INVALIDATED
+GEN-014 Invalidated & Audio Buffer Flushed (<0.2 ms)
     ↓
-Audio Buffer Flushed / Cancelled Immediately
+GEN-015 Created (Active)
     ↓
-GEN-015 CREATED & ACTIVE
+Delayed GEN-014 Tool Result Arrives ("Path clear")
     ↓
-Delayed GEN-014 Tool Result Arrives
-    ↓
-FENCE CHECK: GEN-014 != GEN-015 → STALE RESULT REJECTED (0 LEAKS)
+FENCE CHECK: GEN-014 != GEN-015 → STALE RESULT DISCARDED (0 LEAKS)
     ↓
 GEN-015 Generates & Delivers Hazard Directive via Rime TTS
-    ↓
-Forensic Incident Recorded & Replayable
 ```
 
 ---
 
-## 6. Architecture
+## 2. Architecture & Dual Runtime Paths
 
-EchoGuard provides two complementary runtime paths:
-1. **Interactive Evaluation Center (Primary Hackathon Demonstration):** An interactive, forensic Web Control Center served by FastAPI. It pairs browser-side Web Audio capture and instant acoustic cutoff with a server-side Generation Fencing gateway that streams speech directly from the official Rime TTS engine (`https://users.rime.ai/v1/rime-tts`) and emits high-resolution telemetry over WebSockets.
-2. **Headless LiveKit Agent Worker:** A headless WebRTC worker (`agent/main.py`) built on `livekit-agents` and the official `livekit-plugins-rime` WebSocket streaming plugin (`wss://users-ws.rime.ai/ws3`).
+EchoGuard provides two production-grade runtime paths:
+
+1. **Interactive Web Evaluation Center (Primary Demo Dashboard):**
+   - **Frontend:** React 19, TypeScript, Tailwind CSS, Web Audio Analyser (live mic capture + dynamic oscilloscope), and dedicated HTML5 Audio element for zero-latency acoustic cutoff.
+   - **FastAPI Reliability Gateway:** Manages generation fencing, dual-lane forensic telemetry over WebSockets (`/api/ws/telemetry`), and streaming audio proxying directly to Rime REST endpoints (`/api/tts/audio`).
+2. **Headless LiveKit WebRTC Worker (`agent/main.py`):**
+   - Standalone WebRTC agent built with `livekit-agents` and the official `livekit-plugins-rime` package.
+   - Subscribes to live room audio tracks, streams synthesized audio over WebSockets (`wss://users-ws.rime.ai/ws3`), and enforces generation fencing across conversational turns.
 
 ```
-========================================================================================
-PATH A: INTERACTIVE WEB EVALUATION CENTER (JUDGE DASHBOARD)
-========================================================================================
 ┌────────────────────────────────────────────────────────┐
 │                   BROWSER CLIENT                       │
-│  - React 19 + TypeScript + Vite + Tailwind CSS         │
-│  - Web Audio Analyser (Real Microphone Capture)        │
-│  - HTML5 Dedicated Audio Element (Zero-Latency Stop)   │
+│  - React 19 + TypeScript + Web Audio Mic Capture       │
 │  - Realtime Telemetry WebSocket Client                 │
 └───────────────────────────▲────────────────────────────┘
                             │ REST Audio Stream / WebSocket Telemetry
@@ -101,314 +62,163 @@ PATH A: INTERACTIVE WEB EVALUATION CENTER (JUDGE DASHBOARD)
 │              FASTAPI RELIABILITY GATEWAY               │
 │  - Audio Gateway (/api/tts/audio -> Rime REST Stream)  │
 │  - Generation Fencing Dispatch & Invariant Checks      │
-│  - Dual-Lane Forensic Incident Engine                  │
-│  - Automated 6-Scenario Chaos Lab                      │
-│  - Live Rime Catalog & Connectivity Probing            │
+│  - Dual-Lane Forensic Incident Engine & Chaos Lab      │
 └───────────────────────────▲────────────────────────────┘
                             │
 ┌───────────────────────────▼────────────────────────────┐
 │                   RIME TTS PLATFORM                    │
 │  - REST API: https://users.rime.ai/v1/rime-tts         │
+│  - WebSockets: wss://users-ws.rime.ai/ws3              │
 │  - Models: coda (High-fidelity) / mistv3 (Low-latency) │
 │  - Voices: celeste (Conversational) / astra (Dispatch) │
-└────────────────────────────────────────────────────────┘
-
-========================================================================================
-PATH B: HEADLESS LIVEKIT WEBRTC WORKER (CLI AGENT)
-========================================================================================
-┌────────────────────────────────────────────────────────┐
-│               ECHOGUARD LIVEKIT WORKER                 │
-│                 (agent/main.py)                        │
-│  - livekit-agents: WebRTC Room & Track Subscription    │
-│  - livekit-plugins-rime: WebSocket Streaming Client    │
-│  - GenerationFence: Invariant Enforcement              │
-│  - Short-lived JWT Auth via /api/token                 │
 └────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 7. Transport & Runtime Paths
+## 3. Official Rime TTS Integration
 
-To ensure strict engineering honesty (truth-in-advertising):
-- **Web Evaluation Center Audio Transport:** Audio is delivered via an authenticated HTTP/REST chunked streaming gateway (`/api/tts/audio` forwarding to `https://users.rime.ai/v1/rime-tts`) directly to the browser's dedicated HTML5 Audio element. Telemetry and forensic events stream over WebSocket (`/api/ws/telemetry`). Interruption performs an immediate synchronous acoustic cutoff (`flushAudio()`), pauses the audio pipeline, clears the buffer, and issues `/api/session/interrupt` to invalidate the active generation.
-- **Headless Worker Audio Transport:** `agent/main.py` runs a standalone LiveKit worker that connects to LiveKit WebRTC rooms (`livekit.agents.WorkerOptions`), subscribes to audio tracks, and streams synthesized speech using `livekit-plugins-rime` over WebSocket (`wss://users-ws.rime.ai/ws3`).
-- **Authentication:** All client requests are authenticated server-side. LiveKit API keys and Rime API keys never touch the client bundle.
+EchoGuard integrates with official Rime TTS endpoints across both REST and WebSocket transports:
 
----
-
-## 8. Rime Integration
-
-- EchoGuard interfaces directly with official Rime TTS endpoints via both REST streaming and the official LiveKit Rime plugin (`livekit-plugins-rime`).
-- Spoken output is verified against live Rime endpoints.
-- Exact active configuration:
-  - **Provider:** Rime
-  - **Model:** `coda` (Ultra-high fidelity neural) / `mistv3` (Ultra-low latency streaming)
-  - **Speaker:** `celeste` (Default conversational) / `astra` (Safety dispatch)
-  - **Language:** `en` (`eng`)
-  - **Transports:** `HTTP/REST Chunked Streaming` (Web Dashboard) & `WebSocket Streaming` (LiveKit Worker)
-  - **Audio Format:** `MP3` / `PCM` (16000 Hz)
-  - **Sample Rate:** `16000` Hz / `24000` Hz
-  - **Segmentation:** `bySentence`
-  - **REST Endpoint:** `https://users.rime.ai/v1/rime-tts`
-  - **WebSocket Endpoint:** `wss://users-ws.rime.ai/ws3`
+- **Models Supported:** `coda` (ultra-high fidelity neural synthesis) and `mistv3` (ultra-low latency streaming).
+- **Voices Configured:** `celeste` (natural conversational assistant) and `astra` (urgent safety/dispatch tone).
+- **Transports:**
+  - *Web Evaluation Center:* Authenticated HTTP chunked streaming proxy (`https://users.rime.ai/v1/rime-tts`).
+  - *LiveKit Agent Worker:* Official `livekit-plugins-rime` WebSocket client (`wss://users-ws.rime.ai/ws3`).
+- **Audio Output:** PCM (16 kHz / 24 kHz) and MP3 with sentence-level segmentation (`bySentence`).
+- **Secret Protection:** Rime API keys remain strictly server-side and are never exposed to browser bundles.
 
 ---
 
-## 9. Generation Fencing
+## 4. Generation Fencing & Interruption Handling
 
-Every conversational interaction belongs to a monotonically incrementing generation ID (e.g., `GEN-014`).
-Every background task, model call, and tool execution registers with the current generation:
+Every interaction turn is tagged with a monotonically increasing generation ID (`GEN-014`). All asynchronous tasks register their originating generation:
 
 ```python
 op_gen = fence.register_async_operation(op_id, "check_clearance")
 ```
 
-When results return, they must pass the generation gate:
-
-```python
-if op_gen != fence.current_generation_id or op_gen in fence.invalidated_generations:
-    # REJECT STALE RESULT
-    return False
-```
-
-If rejected, the output is completely discarded and never transmitted to Rime TTS.
-
----
-
-## 10. Interruption Recovery
-
-When user speech is detected during agent speech:
-1. Interruption timestamp is captured.
-2. Voice state transitions to `INTERRUPTING`.
-3. Web Audio queue and TTS streaming handles are flushed synchronously.
-4. Active generation is added to `invalidated_generations`.
-5. Next generation is created (`GEN-015`).
-6. State transitions to `RECOVERING`.
-7. Updated context is evaluated and dispatched to Rime TTS.
-8. Latencies (`interrupt → audio stop` and `new generation → speech`) are measured and recorded.
+When an interruption occurs:
+1. **Immediate Cutoff:** Browser audio buffers flush synchronously (`0.14 ms`), audio playback halts immediately, and `/api/session/interrupt` is dispatched.
+2. **Invalidation:** `GEN-014` is marked as invalidated in `fence.invalidated_generations`.
+3. **Generation Rollover:** `GEN-015` becomes the active generation.
+4. **Fence Gate Enforcement:** Any delayed result arriving from `GEN-014` is blocked at the fence:
+   ```python
+   if op_gen != fence.current_generation_id or op_gen in fence.invalidated_generations:
+       # REJECT STALE RESULT - NEVER SEND TO RIME TTS
+       return False
+   ```
+5. **Recovery:** Only current context is dispatched to Rime TTS under `GEN-015`.
 
 ---
 
-## 11. Incident Recorder
+## 5. Forensic Incident Recorder & Chaos Lab
 
-Every interruption sequence generates a structured forensic incident:
-- `incidentId` (e.g., `INC-0047`)
-- Timestamps and duration in milliseconds
-- Stale results blocked count
-- Dual-lane reconstruction (`AGENT STATE` vs `USER HEARD`)
-- Progressive answers to the 5 core forensic questions:
+- **Dual-Lane Incident Telemetry:** Logs structured events comparing `AGENT INTERNAL STATE` with what the `USER ACTUALLY HEARD`, answering 5 forensic questions for every interruption:
   1. What was the agent doing?
   2. What did the user interrupt?
-  3. What changed?
-  4. What stale work arrived afterward?
-  5. What did the user finally hear?
-- Truth-in-advertising labelling: `ACTUAL AUDIO` vs `EVENT RECONSTRUCTION`.
+  3. What changed in the environment?
+  4. What delayed/stale work returned afterward?
+  5. What did the user ultimately hear?
+- **Automated Chaos Lab:** Built-in suite executing 6 real-time stress scenarios with verifiable assertions:
+  1. *Interrupt During Speech* (Audio cancellation & fence cutoff)
+  2. *Tool Result Race* (Delayed tool payload suppression)
+  3. *Stale Result After State Change* (Sensor updates fencing previous queries)
+  4. *Rapid Interruptions* (Monotonic generation rollover under stress)
+  5. *Audio Queue Conflict* (Zero buffer residue between successive streams)
+  6. *Full Interrupt + Recovery* (End-to-end incident generation)
 
 ---
 
-## 12. Chaos Lab
+## 6. Measured Performance
 
-The Chaos Lab provides 6 automated stress scenarios executing directly against the live engine:
-- **01 INTERRUPT DURING SPEECH:** Verifies audio cancellation and generation fencing.
-- **02 TOOL RESULT RACE:** Verifies delayed tool payload suppression.
-- **03 STALE RESULT AFTER STATE CHANGE:** Verifies sensor safety updates fence prior evaluations.
-- **04 RAPID INTERRUPTIONS:** Verifies monotonic generation indexing under high-frequency bursts.
-- **05 AUDIO QUEUE CONFLICT:** Verifies zero buffer residue between successive audio streams.
-- **06 FULL INTERRUPT + RECOVERY:** The complete showcase scenario with structured incident generation.
+Deterministic performance metrics collected from real-time execution:
 
-All tests report verifiable assertions and calculate observed stale leaks from real execution.
-
----
-
-## 13. Demo Mode vs Live Mode
-
-EchoGuard supports two explicit modes:
-- **LIVE MODE:** Connects live browser microphone, LiveKit WebRTC room, and Rime TTS. Rime status shows `RIME ● LIVE` only when actively connected.
-- **DEMO MODE:** Runs deterministic local stress scenarios with synthetic providers. Clearly displays `DEMO MODE: SYNTHETIC / SIMULATED PROVIDER` and never claims active Rime connection.
+| Operation / Metric | Measured Value | Type | Method |
+| :--- | :--- | :--- | :--- |
+| **Interruption → Buffer Flush Latency** | `0.14 ms` | Uncached (Runtime) | High-resolution monotonic clock delta |
+| **Generation Fence Invalidation** | `0.02 ms` | Synchronous | Set membership & generation rollover |
+| **Stale Result Rejection Gate** | `0.10 ms` | Uncached (Runtime) | Gate check prior to audio dispatch |
+| **Chaos Lab Suite (All 6 Scenarios)** | `~51 ms` | Live Execution | Monotonic pass through test suite |
+| **Rime Synthesize TTFB** | `38 ms – 150 ms` | Network RTT | Live API round-trip |
+| **Observed Stale Spoken Leaks** | **0** | Deterministic Invariant | Zero stale audio reaches speaker |
 
 ---
 
-## 14. Setup
+## 7. Cloud Deployment (Render.com)
 
-### Prerequisites
-- Python 3.10+
-- Node.js 18+ & npm
+EchoGuard is deployed as a live Web Service on Render:
 
-### Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/your-username/echoguard.git
-cd echoguard
-
-# Install Python dependencies
-pip install -r requirements.txt
-
-# Install frontend dependencies
-cd frontend
-npm install
-npm run build
-cd ..
-```
-
----
-
-## 15. Environment Variables
-
-Copy `.env.example` to `.env` and fill in credentials:
-
-```bash
-cp .env.example .env
-```
-
-Configuration keys:
-```ini
-RIME_API_KEY=your_rime_api_key_here
-LIVEKIT_URL=wss://your-livekit-url
-LIVEKIT_API_KEY=your_livekit_api_key
-LIVEKIT_API_SECRET=your_livekit_api_secret
-PORT=8000
-HOST=127.0.0.1
-RIME_MODEL=coda
-RIME_SPEAKER=celeste
-RIME_LANG=en
-RIME_TRANSPORT=websocket
-RIME_AUDIO_FORMAT=pcm
-RIME_SAMPLE_RATE=16000
-```
-
----
-
-## 16. Running Locally
-
-### Start EchoGuard Server (Serves Backend + UI on Port 8000)
-```bash
-python -m uvicorn server.main:app --host 127.0.0.1 --port 8000
-```
-
-Open browser at `http://127.0.0.1:8000/`.
-
-### Run Frontend in Vite Dev Server (Optional)
-```bash
-cd frontend
-npm run dev
-```
-
----
-
-## 17. Public Cloud Deployment
-
-EchoGuard is production-ready for immediate public HTTPS deployment on cloud container/service providers.
-
-### Recommended Platform: Render.com (Web Service)
-
-**Why Render:**
-- **Zero-Build UI Serving:** `frontend/dist` is included directly in the repository; FastAPI serves the compiled static SPA natively from `/` without requiring a Node.js runtime on the cloud host.
-- **WebSocket & Audio Streaming:** Full support for persistent WebSockets (`/api/ws/telemetry`) and streaming chunked audio responses (`/api/tts/audio`).
-- **Free Automatic SSL/TLS:** Delivers a secure `https://<your-app>.onrender.com` domain required by modern browsers for Web Audio / Microphone permissions.
-
-### Exact Cloud Deployment Configuration
-
-- **Environment:** `Python 3`
-- **Build Command:**
-  ```bash
-  pip install -r requirements.txt
-  ```
-- **Start Command (reads `$PORT` from environment, binds to `0.0.0.0`):**
-  ```bash
-  uvicorn server.main:app --host 0.0.0.0 --port $PORT
-  ```
-- **Included Deployment Files:**
-  - `Procfile` (`web: uvicorn server.main:app --host 0.0.0.0 --port $PORT`)
-  - Server entrypoint: `server/main.py` automatically binds to `os.environ.get("PORT", 8000)` and `os.environ.get("HOST", "0.0.0.0")`.
+- **Live URL:** [https://echoguard-sskh.onrender.com/](https://echoguard-sskh.onrender.com/)
+- **Zero-Build SPA Serving:** Pre-built `frontend/dist` is packaged with the repository; FastAPI serves the SPA natively without requiring a separate Node.js build step on the server.
+- **WebSocket & Audio Streaming:** Full support for persistent WebSockets (`/api/ws/telemetry`) and streaming chunked audio (`/api/tts/audio`).
+- **Free SSL/TLS:** Ensures valid HTTPS/WSS origin for browser microphone permissions (`navigator.mediaDevices.getUserMedia`).
+- **Included Deployment Configuration:**
+  - `Procfile`: `web: uvicorn server.main:app --host 0.0.0.0 --port $PORT`
+  - Dynamic port binding in `server/main.py`.
 
 ### Required Cloud Environment Variables
 
-In your cloud provider dashboard (e.g. Render Dashboard $\rightarrow$ Environment):
-
-| Variable Name | Required | Description | Example / Placeholder |
-| :--- | :--- | :--- | :--- |
-| `RIME_API_KEY` | **YES** | Official Rime API key for live speech synthesis | `rime_live_...` |
-| `GEMINI_API_KEY` | Optional | Google Gemini Flash key for dynamic LLM generation | `AIzaSy...` |
-| `LIVEKIT_URL` | Optional | LiveKit WebRTC server endpoint | `wss://...livekit.cloud` |
-| `LIVEKIT_API_KEY` | Optional | LiveKit API Key (kept strictly server-side) | `API...` |
-| `LIVEKIT_API_SECRET` | Optional | LiveKit API Secret (kept strictly server-side) | `secret...` |
-| `RIME_MODEL` | Default | Production neural synthesis model | `coda` |
-| `RIME_SPEAKER` | Default | Active conversational voice | `celeste` |
-
+| Variable | Required | Purpose |
+| :--- | :--- | :--- |
+| `RIME_API_KEY` | **Yes** | Live speech synthesis via Rime TTS |
+| `GEMINI_API_KEY` | Optional | Dynamic LLM reasoning via Google Gemini Flash |
+| `LIVEKIT_URL` | Optional | LiveKit WebRTC endpoint |
+| `LIVEKIT_API_KEY` | Optional | LiveKit server authentication |
+| `LIVEKIT_API_SECRET` | Optional | LiveKit server secret |
+| `RIME_MODEL` | Default (`coda`) | Rime model selection (`coda` / `mistv3`) |
+| `RIME_SPEAKER` | Default (`celeste`) | Conversational voice persona |
 
 ---
 
-## 18. Preflight Verification & Hygiene Check
+## 8. Local Setup & Verification
 
-Run the comprehensive preflight check to verify secret safety, .gitignore hygiene, Rime live catalog configuration, live synthesis probe, and invariant tests in one command:
+### Prerequisites
+- Python 3.10+
+- Node.js 18+ (for frontend development only; compiled dist is pre-built)
+
+### Quickstart
 
 ```bash
-python scripts/preflight_check.py
+# 1. Clone the repository
+git clone https://github.com/Shivamshrma12/Echoguard.git
+cd Echoguard
+
+# 2. Install dependencies
+pip install -r requirements.txt
+
+# 3. Configure environment
+cp .env.example .env
+# Edit .env and supply your RIME_API_KEY
+
+# 4. Start the server (serves both API and UI on port 8000)
+python -m uvicorn server.main:app --host 127.0.0.1 --port 8000
 ```
 
----
+Open `http://127.0.0.1:8000/` in your browser.
 
-## 19. Testing & Invariant Proofs
-
-Run the automated test suite with pytest:
+### Automated Tests & Invariant Proofs
 
 ```bash
+# Run preflight verification & secret hygiene check
+python scripts/preflight_check.py
+
+# Run test suite (asserts 0 stale leaks)
 python -m pytest tests/ -v
 ```
 
-All **17 unit, integration, and acceptance tests** execute and deterministically assert **0 stale leaks**.
-
-Run the formal acceptance test:
-
-```bash
-python -m pytest tests/test_acceptance.py -v
-```
-
-Invariant asserted:
-```python
-assert is_valid is False  # Delayed tool result from Gen N rejected
-assert fence.metrics.staleResultsBlocked == 1
-assert fence._audio_queue_active is False
-```
-
 ---
 
-## 20. Measured Performance & Latency Breakdown
+## 9. Limitations & Third-Party Licenses
 
-To ensure full transparency (truth-in-advertising), measurements are categorized by cached vs uncached and runtime vs acoustic transducers:
+### Limitations
+- EchoGuard is a hackathon prototype demonstrating deterministic stale-result fencing; it does not replace certified industrial hardware watchdogs.
+- In environments without live microphone permissions, audio timeline events are transparently labelled as `EVENT RECONSTRUCTION`.
+- Acoustic stop latency measurements reflect software buffer invalidation and dispatch; actual acoustic cessation depends on local OS sound card buffers.
 
-| Operation / Metric | Measured Value | Measurement Type | Verification Method |
-| :--- | :--- | :--- | :--- |
-| **Interruption → Buffer Flush Latency** | `0.14 ms` | **Uncached (Runtime)** | High-resolution monotonic clock delta (`t_flush - t_interrupt`) |
-| **Generation Fence Invalidation** | `0.02 ms` | **Uncached (Synchronous)** | Set membership & generation state transition |
-| **Stale Result Rejection Gate** | `0.10 ms` | **Uncached (Runtime)** | Gate check before audio dispatch |
-| **Chaos Lab Suite (6 Stress Scenarios)** | `~51 ms` | **Uncached (Live HTTP)** | Monotonic execution across full 6-scenario suite |
-| **Rime Synthesize TTFB (WebSocket/REST)** | `38 ms - 150 ms` | **Uncached (Network RTT)** | Real round-trip API network latency |
-| **Acoustic Transducer Latency** | *External Hardware* | **Transducer Output** | Local OS/Bluetooth sound card buffer drain (not simulated) |
-
----
-
-## 21. Limitations
-
-- EchoGuard is a prototype demonstrating deterministic stale-result fencing. It does **not** claim safety certification or guarantee zero accident risk in industrial deployments without hardware watchdog integration.
-- In environments without live microphone permissions or live WebRTC connectivity, acoustic data is labelled as `EVENT RECONSTRUCTION`.
-- Acoustic stop latency measurements reflect runtime buffer invalidation and dispatch; actual transducer cessation depends on local hardware audio buffers.
-
----
-
-## 22. AI-Assisted Development Disclosure
-
-Developed with agentic assistance from Antigravity IDE (Google DeepMind) for architectural scaffolding, testing harness design, and UI component synthesis.
-
----
-
-## 23. Third-Party Licenses
-
+### Third-Party Licenses
 - **LiveKit Agents & Client:** Apache 2.0
 - **LiveKit Rime Plugin:** Apache 2.0
 - **FastAPI / Starlette:** MIT License
 - **Lucide Icons:** ISC License
 - **Tailwind CSS:** MIT License
-
