@@ -53,3 +53,6 @@ pnpm-debug.log*
 Thumbs.db
 .vscode/
 .idea/
+
+# Large media binaries (packaged in submission zip)
+demo/*.mp4
