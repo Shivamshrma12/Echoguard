@@ -12,6 +12,8 @@ export class AudioManager {
   private recognition: any = null;
   private currentUtterance: SpeechSynthesisUtterance | null = null;
   public isSpeaking: boolean = false;
+  public activeSpokenText: string = '';
+  public activeGenerationId: string = '';
   private silenceTimer: any = null;
   private accumulatedSpeech: string = '';
   private audioElement: HTMLAudioElement | null = null;
@@ -21,7 +23,24 @@ export class AudioManager {
 
   private vadInterval: any = null;
   private consecutiveVoiceFrames: number = 0;
-  private watchdogInterval: any = null;
+  private invalidatedGenerations: Set<string> = new Set();
+
+  public setGeneration(genId: string): void {
+    this.activeGenerationId = genId;
+  }
+
+  public invalidateGeneration(genId: string): void {
+    if (genId) {
+      this.invalidatedGenerations.add(genId);
+    }
+  }
+
+  public isGenerationValid(genId: string): boolean {
+    if (!genId) return true;
+    if (this.invalidatedGenerations.has(genId)) return false;
+    if (this.activeGenerationId && genId !== this.activeGenerationId) return false;
+    return true;
+  }
 
   public async startMicrophone(): Promise<boolean> {
     try {
@@ -34,7 +53,7 @@ export class AudioManager {
         await this.audioCtx.resume();
       }
 
-      // Request microphone with hardware/browser Acoustic Echo Cancellation (AEC)
+      // Request microphone with standard browser Acoustic Echo Cancellation (AEC) constraints
       this.micStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -64,10 +83,6 @@ export class AudioManager {
       clearInterval(this.vadInterval);
       this.vadInterval = null;
     }
-    if (this.watchdogInterval) {
-      clearInterval(this.watchdogInterval);
-      this.watchdogInterval = null;
-    }
     if (this.micStream) {
       this.micStream.getTracks().forEach((t) => t.stop());
       this.micStream = null;
@@ -80,14 +95,94 @@ export class AudioManager {
   }
 
   /**
-   * Starts browser speech recognition with immediate interrupt handling,
-   * continuous listening, and real-time acoustic VAD barge-in.
+   * Helper: check if utterance contains an explicit user interruption keyword
+   */
+  private isExplicitInterruptionPhrase(text: string): boolean {
+    const lower = text.toLowerCase().trim();
+    const interruptPhrases = [
+      'stop',
+      'no',
+      'wait',
+      'hold on',
+      'cancel',
+      'pause',
+      'quiet',
+      'shut up',
+      'freeze',
+      'hold',
+      'hang on',
+      'no stop',
+      'please stop',
+      'listen',
+      'hey',
+    ];
+    return interruptPhrases.some((p) => {
+      const re = new RegExp(`(^|\\b)${p}(\\b|$)`, 'i');
+      return re.test(lower);
+    });
+  }
+
+  /**
+   * Helper: clean string into lowercase alpha tokens
+   */
+  private cleanTokens(text: string): string[] {
+    return text
+      .toLowerCase()
+      .replace(/[^\w\s]/g, '')
+      .split(/\s+/)
+      .filter((w) => w.length > 1);
+  }
+
+  /**
+   * Helper: checks if the candidate transcript is acoustic feedback / echo
+   * of what the agent is currently speaking through the speakers.
+   */
+  private isLikelySpeakerEcho(candidateText: string, activeSpokenText: string): boolean {
+    if (!activeSpokenText || !candidateText) return false;
+
+    // Explicit interruption phrases are never considered echo
+    if (this.isExplicitInterruptionPhrase(candidateText)) {
+      return false;
+    }
+
+    const candidateTokens = this.cleanTokens(candidateText);
+    const spokenTokens = this.cleanTokens(activeSpokenText);
+
+    if (candidateTokens.length === 0) return true;
+
+    let matchCount = 0;
+    for (const token of candidateTokens) {
+      if (spokenTokens.includes(token)) {
+        matchCount++;
+      }
+    }
+
+    const matchRatio = matchCount / candidateTokens.length;
+    // If 40% or more of words in candidate are part of currently playing agent speech,
+    // it is speaker feedback picked up by the microphone.
+    if (matchRatio >= 0.4) {
+      return true;
+    }
+
+    const normCand = candidateText.toLowerCase().replace(/[^\w]/g, '');
+    const normSpoken = activeSpokenText.toLowerCase().replace(/[^\w]/g, '');
+    if (normSpoken.includes(normCand) && normCand.length > 4) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Starts browser speech recognition with continuous listening, speaker echo filtering,
+   * automatic user barge-in, and generation protection.
    */
   public startListening(
     onResult: (text: string) => void,
     onSpeechStart?: () => void,
-    onBargeIn?: () => void,
-    onError?: (err: any) => void
+    onBargeIn?: (interruptedUtterance?: string) => void,
+    onError?: (err: any) => void,
+    onInterim?: (interimText: string) => void
   ): boolean {
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -98,56 +193,15 @@ export class AudioManager {
 
     this.shouldBeListening = true;
 
-    // Trigger barge-in: cancel Rime playback immediately in 0ms without destroying speech buffer
-    const triggerBargeIn = (source: string) => {
-      if (this.isSpeaking) {
-        console.log(`[EchoGuard] Automatic Barge-In triggered via ${source}! Cancelling Rime speech output.`);
-        this.flushAudioOnly();
-        if (onBargeIn) {
-          onBargeIn();
-        } else if (onSpeechStart) {
-          onSpeechStart();
-        }
-      }
-    };
-
-    // Continuous Real-Time Acoustic VAD Loop (runs every 25ms over echo-cancelled stream)
+    // Continuous Real-Time Acoustic analyser loop (for visual waveform only; does not cut audio blindly)
     if (this.vadInterval) clearInterval(this.vadInterval);
     this.vadInterval = setInterval(() => {
-      if (!this.isSpeaking || !this.analyser || !this.isMicActive) {
+      if (!this.analyser || !this.isMicActive) {
         this.consecutiveVoiceFrames = 0;
         return;
       }
-
-      // Allow 150ms after playback start for browser hardware AEC filter to converge
-      if (Date.now() - this.playbackStartTime < 150) {
-        return;
-      }
-
-      const buffer = new Uint8Array(this.analyser.frequencyBinCount);
-      this.analyser.getByteFrequencyData(buffer);
-
-      // Human speech frequency band (bins 3 to 20 correspond to ~350Hz - 3600Hz)
-      let voiceEnergy = 0;
-      const minBin = 3;
-      const maxBin = Math.min(20, buffer.length - 1);
-      for (let i = minBin; i <= maxBin; i++) {
-        voiceEnergy += buffer[i];
-      }
-      const avgVoiceEnergy = voiceEnergy / (maxBin - minBin + 1);
-
-      // Distinct human voice energy threshold above noise/echo-cancelled baseline
-      if (avgVoiceEnergy > 42) {
-        this.consecutiveVoiceFrames++;
-        if (this.consecutiveVoiceFrames >= 2) {
-          // Sustained human speech detected during agent speech
-          triggerBargeIn('vad_acoustic');
-          this.consecutiveVoiceFrames = 0;
-        }
-      } else {
-        this.consecutiveVoiceFrames = 0;
-      }
-    }, 25);
+      this.consecutiveVoiceFrames = 0;
+    }, 50);
 
     try {
       if (this.recognition) {
@@ -160,45 +214,113 @@ export class AudioManager {
       rec.lang = 'en-US';
 
       rec.onspeechstart = () => {
-        triggerBargeIn('speech_start');
-        if (onSpeechStart) onSpeechStart();
+        if (!this.isSpeaking && onSpeechStart) {
+          onSpeechStart();
+        }
       };
 
       rec.onresult = (event: any) => {
-        triggerBargeIn('speech_result');
-
-        let interim = '';
-        let lastIsFinal = false;
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          const item = event.results[i];
-          if (item.isFinal) {
-            this.accumulatedSpeech += (this.accumulatedSpeech ? ' ' : '') + item[0].transcript;
-            lastIsFinal = true;
+        let finalTranscript = '';
+        let interimTranscript = '';
+        for (let i = 0; i < event.results.length; ++i) {
+          const res = event.results[i];
+          if (res.isFinal) {
+            finalTranscript += res[0].transcript + ' ';
           } else {
-            interim += item[0].transcript;
+            interimTranscript += res[0].transcript;
           }
         }
 
-        const candidate = (this.accumulatedSpeech + ' ' + interim).trim();
+        const candidate = (finalTranscript + interimTranscript).trim();
         if (!candidate) return;
 
-        // Optimized fast debounce: 150ms when finalized, 350ms on pauses
-        const debounceMs = lastIsFinal ? 150 : 350;
+        // If the agent is currently speaking aloud through the speakers:
+        if (this.isSpeaking) {
+          // Check A: Explicit interruption phrase ("stop", "no", "wait", "hold on", "cancel", "pause", "quiet", "hey", "listen")
+          if (this.isExplicitInterruptionPhrase(candidate)) {
+            console.log(`[EchoGuard] User explicit barge-in keyword: "${candidate}". Cutting audio.`);
+            this.flushAudioOnly();
+            if (onBargeIn) {
+              onBargeIn(candidate);
+            }
+            if (onInterim) onInterim(candidate);
+            return;
+          }
+          // Check B: Speaker self-echo from laptop speakers — ignore and do not interrupt
+          if (this.isLikelySpeakerEcho(candidate, this.activeSpokenText)) {
+            return;
+          }
+          // Check C: User speaking a distinct, new utterance over the agent's voice (>= 2 distinct tokens)
+          const tokens = this.cleanTokens(candidate);
+          if (tokens.length >= 2) {
+            console.log(`[EchoGuard] User distinct speech barge-in: "${candidate}". Cutting audio.`);
+            this.flushAudioOnly();
+            if (onBargeIn) {
+              onBargeIn(candidate);
+            }
+            if (onInterim) onInterim(candidate);
+            return;
+          }
+          // While speaking, do not trigger normal LLM query
+          return;
+        }
+
+        // --- NOT SPEAKING: Agent is listening to user's question ---
+        if (onInterim) {
+          onInterim(candidate);
+        }
+
+        // Conversational End-of-Speech silence timeout:
+        const words = candidate.split(/\s+/).filter(Boolean);
+        const lastWord = words.length > 0 ? words[words.length - 1].toLowerCase().replace(/[^\w]/g, '') : '';
+        
+        const incompleteTrailing = [
+          'tell', 'what', 'who', 'how', 'when', 'why', 'where', 'which',
+          'is', 'are', 'was', 'were', 'am', 'be', 'been',
+          'can', 'could', 'would', 'should', 'will', 'do', 'does', 'did',
+          'explain', 'give', 'say', 'me', 'you',
+          'the', 'a', 'an', 'to', 'for', 'about', 'in', 'on', 'at', 'by',
+          'my', 'your', 'and', 'or', 'of', 'if', 'so', 'then', 'with', 'please'
+        ];
+
+        // Default conversational silence timeout: 1400ms for natural pauses
+        let debounceMs = 1400;
+
+        if (words.length < 3 || incompleteTrailing.includes(lastWord)) {
+          // If the user spoke only 1-2 words (e.g. "tell me" or "what is" or trailing preposition "about"),
+          // allow 2200ms so they can comfortably finish their complete sentence!
+          debounceMs = 2200;
+        } else if (words.length >= 5 && (candidate.endsWith('?') || candidate.endsWith('.') || candidate.endsWith('!'))) {
+          // Complete sentence with natural punctuation
+          debounceMs = 1100;
+        }
 
         if (this.silenceTimer) {
           clearTimeout(this.silenceTimer);
         }
+
         this.silenceTimer = setTimeout(() => {
-          const textToSend = (this.accumulatedSpeech || candidate).trim();
-          this.accumulatedSpeech = '';
+          const textToSend = candidate.trim();
+          if (onInterim) onInterim('');
+
           if (textToSend) {
+            // Do not send if it was merely residual speaker echo
+            if (this.isLikelySpeakerEcho(textToSend, this.activeSpokenText)) {
+              return;
+            }
+            
+            // Cleanly abort to reset the internal result list for the next turn
+            try {
+              rec.abort();
+            } catch {}
+
             onResult(textToSend);
           }
         }, debounceMs);
       };
 
       rec.onerror = (e: any) => {
-        // Ignore expected silence timeouts
+        // Ignore expected silence timeouts or aborts
         if (e.error === 'no-speech' || e.error === 'aborted') {
           return;
         }
@@ -207,14 +329,14 @@ export class AudioManager {
       };
 
       rec.onend = () => {
-        // Continuous listening: restart immediately if session is active
+        // Continuous listening: restart cleanly if session is active
         if (this.shouldBeListening) {
           setTimeout(() => {
             if (this.shouldBeListening && this.recognition) {
               try {
                 this.recognition.start();
               } catch (e) {
-                // Ignore if already starting
+                // Ignore if already active
               }
             }
           }, 60);
@@ -223,18 +345,6 @@ export class AudioManager {
 
       rec.start();
       this.recognition = rec;
-
-      // Watchdog interval to ensure recognition is never permanently dead
-      if (this.watchdogInterval) clearInterval(this.watchdogInterval);
-      this.watchdogInterval = setInterval(() => {
-        if (this.shouldBeListening && this.recognition) {
-          try {
-            this.recognition.start();
-          } catch (e) {
-            // Already active
-          }
-        }
-      }, 1200);
 
       return true;
     } catch (e) {
@@ -248,10 +358,6 @@ export class AudioManager {
     if (this.vadInterval) {
       clearInterval(this.vadInterval);
       this.vadInterval = null;
-    }
-    if (this.watchdogInterval) {
-      clearInterval(this.watchdogInterval);
-      this.watchdogInterval = null;
     }
     if (this.silenceTimer) {
       clearTimeout(this.silenceTimer);
@@ -269,17 +375,41 @@ export class AudioManager {
   }
 
   /**
-   * Speaks the response through a single dedicated Rime TTS audio channel.
-   * Cancels prior speech output in 0ms without erasing user input buffers.
+   * Speaks the response through a single dedicated Rime TTS audio channel with generation fencing.
+   * Cancels prior speech output with immediate cutoff without erasing user input buffers.
    */
   public async speak(
     text: string,
-    onStart?: () => void,
-    onEnd?: () => void
+    generationIdOrOnStart?: string | (() => void),
+    onStartOrOnEnd?: (() => void),
+    onEndCallback?: (() => void)
   ): Promise<void> {
+    let actualGenId: string | undefined;
+    let onStart: (() => void) | undefined;
+    let onEnd: (() => void) | undefined;
+
+    if (typeof generationIdOrOnStart === 'function') {
+      actualGenId = this.activeGenerationId;
+      onStart = generationIdOrOnStart;
+      onEnd = onStartOrOnEnd;
+    } else {
+      actualGenId = generationIdOrOnStart || this.activeGenerationId;
+      onStart = onStartOrOnEnd;
+      onEnd = onEndCallback;
+    }
+
+    const generationId = actualGenId;
+    if (generationId) {
+      this.activeGenerationId = generationId;
+      if (this.invalidatedGenerations.has(generationId)) {
+        console.warn(`[EchoGuard Fence] Dropping speak() for invalidated generation: ${generationId}`);
+        return;
+      }
+    }
     this.flushAudioOnly();
     const playId = ++this.currentPlayId;
     this.isSpeaking = true;
+    this.activeSpokenText = text;
 
     if (!this.audioElement) {
       this.audioElement = new Audio();
@@ -291,6 +421,10 @@ export class AudioManager {
 
     const notifyStart = () => {
       if (!hasStarted && playId === this.currentPlayId) {
+        if (generationId && !this.isGenerationValid(generationId)) {
+          try { audio.pause(); } catch {}
+          return;
+        }
         hasStarted = true;
         this.isSpeaking = true;
         this.playbackStartTime = Date.now();
@@ -302,13 +436,14 @@ export class AudioManager {
       if (!hasEnded && playId === this.currentPlayId) {
         hasEnded = true;
         this.isSpeaking = false;
+        this.activeSpokenText = '';
         if (onEnd) onEnd();
       }
     };
 
     // Reset handlers
     audio.onplay = () => {
-      if (playId !== this.currentPlayId) {
+      if (playId !== this.currentPlayId || (generationId && !this.isGenerationValid(generationId))) {
         try { audio.pause(); } catch {}
         return;
       }
@@ -316,27 +451,28 @@ export class AudioManager {
     };
 
     audio.onended = () => {
-      if (playId !== this.currentPlayId) return;
+      if (playId !== this.currentPlayId || (generationId && !this.isGenerationValid(generationId))) return;
       notifyEnd();
     };
 
     audio.onerror = (e) => {
-      if (playId !== this.currentPlayId) return;
+      if (playId !== this.currentPlayId || (generationId && !this.isGenerationValid(generationId))) return;
       console.warn('Rime audio load notice, falling back to speech synthesis:', e);
       this.fallbackSpeak(text, notifyStart, notifyEnd);
     };
 
-    const rimeUrl = `/api/tts/audio?text=${encodeURIComponent(text)}`;
+    const rimeUrl = `/api/tts/audio?text=${encodeURIComponent(text)}${generationId ? `&generationId=${encodeURIComponent(generationId)}` : ''}`;
     audio.src = rimeUrl;
 
     try {
+      if (generationId && !this.isGenerationValid(generationId)) return;
       await audio.play();
-      if (playId !== this.currentPlayId) {
+      if (playId !== this.currentPlayId || (generationId && !this.isGenerationValid(generationId))) {
         try { audio.pause(); } catch {}
         return;
       }
     } catch (err: any) {
-      if (err.name === 'AbortError' || playId !== this.currentPlayId) {
+      if (err.name === 'AbortError' || playId !== this.currentPlayId || (generationId && !this.isGenerationValid(generationId))) {
         return;
       }
       console.warn('Audio play notice, falling back to speech synthesis:', err);
@@ -352,6 +488,7 @@ export class AudioManager {
   ): void {
     if (!('speechSynthesis' in window)) {
       this.isSpeaking = false;
+      this.activeSpokenText = '';
       if (onStart) onStart();
       setTimeout(() => {
         if (onEnd) onEnd();
@@ -380,12 +517,14 @@ export class AudioManager {
 
     utterance.onend = () => {
       this.isSpeaking = false;
+      this.activeSpokenText = '';
       this.currentUtterance = null;
       if (onEnd) onEnd();
     };
 
     utterance.onerror = () => {
       this.isSpeaking = false;
+      this.activeSpokenText = '';
       this.currentUtterance = null;
       if (onEnd) onEnd();
     };
@@ -396,11 +535,12 @@ export class AudioManager {
 
   /**
    * Non-destructive acoustic flush:
-   * Instantly silences audio playback in 0ms without clearing accumulated user speech buffers.
+   * Instantly silences audio playback with immediate cutoff without clearing accumulated user speech buffers.
    */
   public flushAudioOnly(): void {
     this.currentPlayId++;
     this.isSpeaking = false;
+    this.activeSpokenText = '';
     if (this.audioElement) {
       try {
         this.audioElement.pause();

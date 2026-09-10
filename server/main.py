@@ -36,41 +36,228 @@ active_rime_model = os.environ.get("RIME_MODEL", "coda").strip()
 active_rime_speaker = os.environ.get("RIME_SPEAKER", "celeste").strip()
 
 gemini_api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY", "").strip()
-
-async def get_gemini_response(prompt: str, context: str = "") -> str:
-    global gemini_api_key
-    if not gemini_api_key:
-        return ""
+gemini_client = None
+if gemini_api_key:
     try:
         from google import genai
-        client = genai.Client(api_key=gemini_api_key)
-        system_instruction = (
-            "You are EchoGuard, a realtime voice reliability layer for voice AI agents. "
-            "Your purpose is to protect voice interactions from stale responses and interruption races by cancelling obsolete speech and ensuring that only the current generation reaches the user. "
-            "You may explain that you are used inside safety-critical applications like Alones Buddy to ensure voice reliability. "
-            "You do NOT directly monitor physical sensors, detect vehicles, or control pedestrian navigation yourself; you are the voice reliability, interruption, and generation-fencing infrastructure. "
-            "Listen carefully to what the user asks or says and provide a direct, natural, and concise spoken answer in 1 to 2 sentences. "
-            "Never use asterisks, markdown, lists, emojis, or robotic filler phrases."
+        gemini_client = genai.Client(api_key=gemini_api_key)
+    except Exception as _e:
+        print(f"Gemini client initialization notice: {_e}")
+
+# Weather description mapping from WMO weather codes
+WEATHER_CODES = {
+    0: "clear skies",
+    1: "mainly clear",
+    2: "partly cloudy",
+    3: "overcast",
+    45: "foggy",
+    48: "depositing rime fog",
+    51: "light drizzle",
+    53: "moderate drizzle",
+    55: "dense drizzle",
+    61: "slight rain",
+    63: "moderate rain",
+    65: "heavy rain",
+    71: "slight snow",
+    73: "moderate snow",
+    75: "heavy snow",
+    80: "slight rain showers",
+    81: "moderate rain showers",
+    82: "violent rain showers",
+    95: "thunderstorms",
+    96: "thunderstorms with slight hail",
+    99: "thunderstorms with heavy hail"
+}
+
+# Persistent HTTP client with connection pooling
+persistent_http_client: Optional[httpx.AsyncClient] = None
+
+def get_http_client() -> httpx.AsyncClient:
+    global persistent_http_client
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if (
+        persistent_http_client is None
+        or persistent_http_client.is_closed
+        or getattr(persistent_http_client, "_loop_ref", None) != loop
+    ):
+        persistent_http_client = httpx.AsyncClient(
+            timeout=10.0,
+            limits=httpx.Limits(max_keepalive_connections=20, max_connections=40)
         )
-        # Verified working fast models in priority order
+        setattr(persistent_http_client, "_loop_ref", loop)
+    return persistent_http_client
+
+import urllib.parse
+import re
+
+async def get_live_weather(location: str) -> Optional[Dict[str, Any]]:
+    """
+    Retrieves actual live real-time meteorological data using Open-Meteo / wttr.in.
+    Returns dictionary with city, country, temperature_c, condition, humidity, wind_kmh, or None.
+    """
+    client = get_http_client()
+    clean_loc = location.strip()
+    if not clean_loc:
+        clean_loc = "Delhi"
+
+    try:
+        # 1. Geocode location with Open-Meteo Geocoding API (fast, free, global)
+        geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={urllib.parse.quote(clean_loc)}&count=1&language=en&format=json"
+        geo_resp = await client.get(geo_url, timeout=2.5)
+        if geo_resp.status_code == 200:
+            geo_data = geo_resp.json()
+            if geo_data.get("results") and len(geo_data["results"]) > 0:
+                loc_info = geo_data["results"][0]
+                lat = loc_info["latitude"]
+                lon = loc_info["longitude"]
+                city_name = loc_info.get("name", clean_loc)
+                country = loc_info.get("country", "")
+
+                # 2. Fetch current weather forecast
+                w_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&timezone=auto"
+                w_resp = await client.get(w_url, timeout=2.5)
+                if w_resp.status_code == 200:
+                    w_data = w_resp.json()
+                    current = w_data.get("current", {})
+                    code = current.get("weather_code", 0)
+                    condition = WEATHER_CODES.get(code, "clear skies")
+                    temp = current.get("temperature_2m")
+                    humidity = current.get("relative_humidity_2m")
+                    wind = current.get("wind_speed_10m")
+                    return {
+                        "city": city_name,
+                        "country": country,
+                        "temperature_c": temp,
+                        "condition": condition,
+                        "humidity": humidity,
+                        "wind_kmh": wind
+                    }
+    except Exception as e:
+        print(f"Open-Meteo lookup notice for '{clean_loc}': {e}")
+
+    # Fallback to wttr.in format=j1 if geocoding fails or is slow
+    try:
+        wttr_url = f"https://wttr.in/{urllib.parse.quote(clean_loc)}?format=j1"
+        w_resp = await client.get(wttr_url, timeout=2.5)
+        if w_resp.status_code == 200:
+            data = w_resp.json()
+            cur = data.get("current_condition", [{}])[0]
+            temp = float(cur.get("temp_C", 25))
+            desc = cur.get("weatherDesc", [{}])[0].get("value", "clear skies")
+            humidity = int(cur.get("humidity", 50))
+            wind = float(cur.get("windspeedKmph", 10))
+            area = data.get("nearest_area", [{}])[0].get("areaName", [{}])[0].get("value", clean_loc)
+            country = data.get("nearest_area", [{}])[0].get("country", [{}])[0].get("value", "")
+            return {
+                "city": area,
+                "country": country,
+                "temperature_c": temp,
+                "condition": desc.lower(),
+                "humidity": humidity,
+                "wind_kmh": wind
+            }
+    except Exception as e:
+        print(f"wttr.in fallback notice for '{clean_loc}': {e}")
+
+    return None
+
+def extract_weather_query(query: str) -> Optional[str]:
+    """
+    Detects if the user is asking about weather.
+    If yes, returns the target city name (or 'Delhi' / default if no city is specified).
+    If not asking about weather, returns None.
+    """
+    q_lower = query.lower()
+    weather_keywords = ["weather", "temperature", "forecast", "climate", "how hot", "how cold", "raining", "sunny"]
+    if not any(k in q_lower for k in weather_keywords):
+        return None
+
+    # Extract target city from patterns like "weather in <city>", "weather for <city>"
+    patterns = [
+        r'(?:weather|temperature|forecast|climate)\s+(?:in|at|for|around|of)\s+([a-zA-Z\s]+?)(?:\?|\.|$|\s+today|\s+now|\s+right now)',
+        r'in\s+([a-zA-Z\s]+?)\s+(?:what is the weather|how is the weather|weather)',
+        r'how\s+(?:is|is the)\s+weather\s+(?:in|for|at)\s+([a-zA-Z\s]+?)(?:\?|\.|$)',
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, query, re.IGNORECASE)
+        if m:
+            city = m.group(1).strip()
+            city = re.sub(r'[^a-zA-Z\s]', '', city).strip()
+            if city and city.lower() not in ["the", "this", "today", "tomorrow", "now"]:
+                return city
+
+    # Match famous standalone cities
+    common_cities = [
+        "delhi", "mumbai", "bangalore", "bengaluru", "kolkata", "chennai", "hyderabad", "pune", "jaipur", "ahmedabad",
+        "london", "new york", "tokyo", "paris", "berlin", "san francisco", "chicago", "sydney", "dubai", "singapore",
+        "toronto", "seattle", "boston", "los angeles", "beijing", "shanghai", "seoul", "rome", "madrid"
+    ]
+    for city in common_cities:
+        if re.search(r'\b' + city + r'\b', q_lower):
+            return city.capitalize()
+
+    return "Delhi"
+
+SYSTEM_INSTRUCTION = (
+    "You are EchoGuard Voice Assistant, an intelligent voice AI powered by EchoGuard's realtime voice reliability and generation-fencing layer. "
+    "Listen carefully to the user's question and provide a direct, natural, and informative spoken answer in 1 to 2 concise conversational sentences (under 25 words). "
+    "Always answer the user's actual question directly and accurately across any topic, including general knowledge, coding, science, philosophy, health, or open conversation. "
+    "Do not use markdown formatting like asterisks, bullet points, headers, lists, emojis, or robotic filler phrases, because your response is read aloud through voice synthesis. "
+    "Speak conversationally, naturally, and warmly. "
+    "Never pretend to have real-time information unless it is explicitly provided in the context."
+)
+
+# Multi-turn conversation memory for natural follow-up reasoning
+conversation_history: List[Dict[str, str]] = []
+
+async def get_gemini_response(prompt: str, context: str = "") -> str:
+    global gemini_client, gemini_api_key, conversation_history
+    if not gemini_client:
+        active_key = gemini_api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY", "").strip()
+        if active_key:
+            try:
+                from google import genai
+                gemini_client = genai.Client(api_key=active_key)
+                gemini_api_key = active_key
+            except Exception as _e:
+                print(f"Lazy gemini_client init error: {_e}")
+    if not gemini_client:
+        return ""
+    try:
+        # Build prompt with conversation history so follow-up questions work seamlessly
+        history_text = ""
+        if conversation_history:
+            history_text = "\nRecent Conversation:\n" + "\n".join(
+                f"{m['role'].capitalize()}: {m['content']}" for m in conversation_history[-6:]
+            ) + "\n"
+
+        full_prompt = f"{SYSTEM_INSTRUCTION}\n{history_text}\nContext: {context}\nUser: {prompt}"
+
+        # Fast free models first for voice latency (<1s), followed by 3.6/3.8
         models_to_try = [
             "gemini-flash-lite-latest",
+            "gemini-3.5-flash-lite",
             "gemini-3.6-flash",
-            "gemini-2.5-flash-lite",
+            "gemini-3.8-flash",
         ]
         for model_name in models_to_try:
             try:
-                # 2.5 second timeout per call to prevent lag
                 response = await asyncio.wait_for(
-                    client.aio.models.generate_content(
+                    gemini_client.aio.models.generate_content(
                         model=model_name,
-                        contents=f"{system_instruction}\nContext: {context}\nUser question: {prompt}"
+                        contents=full_prompt
                     ),
-                    timeout=2.5
+                    timeout=5.0
                 )
                 if response and response.text and response.text.strip():
-                    return response.text.strip()
-            except Exception:
+                    # Clean out any residual markdown symbols for clean speech synthesis
+                    clean_text = response.text.strip().replace("*", "").replace("#", "").replace("`", "")
+                    return clean_text
+            except Exception as _model_err:
+                print(f"Model {model_name} attempt notice: {_model_err}")
                 continue
     except Exception as e:
         print(f"Gemini API error: {e}")
@@ -115,6 +302,11 @@ recorder.subscribe(lambda evt: asyncio.create_task(broadcast_event(evt)))
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Safe API key health check (never prints keys)
+    gemini_status = "configured" if bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")) else "missing"
+    rime_status = "configured" if bool(os.environ.get("RIME_API_KEY")) else "missing"
+    print(f"[EchoGuard Startup Health] GEMINI_API_KEY: {gemini_status} | RIME_API_KEY: {rime_status}")
+
     # Probe Rime on startup
     await rime_service.probe_connection()
     # If no incidents recorded, initialize deterministic baseline incident INC-0045 and INC-0046 for replay inspection
@@ -127,10 +319,10 @@ async def lifespan(app: FastAPI):
             stale_count=1,
             audio_state="FLUSHED",
             resolution="SUCCESS",
-            what_agent_thought="Navigating bypass turn 3...",
-            what_user_heard="Navigating bypass— [INTERRUPTED] Obstacle detected, holding.",
-            what_was_invalidated="GEN-012 turn recommendation and buffered audio",
-            what_was_rejected="GEN-012 delayed lidar map frame",
+            what_agent_thought="Generating speech stream...",
+            what_user_heard="Generating speech— [INTERRUPTED] Stop. Buffer flushed.",
+            what_was_invalidated="GEN-012 speech stream and buffered audio",
+            what_was_rejected="GEN-012 delayed tool response",
             what_was_delivered="GEN-013 immediate holding directive",
             evidence_type="BASELINE DEMO FIXTURE"
         )
@@ -142,11 +334,11 @@ async def lifespan(app: FastAPI):
             stale_count=1,
             audio_state="FLUSHED",
             resolution="SUCCESS",
-            what_agent_thought="Verifying path surface traction...",
-            what_user_heard="Verifying path— [INTERRUPTED] Stop. Vehicle approaching.",
-            what_was_invalidated="GEN-013 surface traction query",
-            what_was_rejected="GEN-013 telemetry report from outdated coordinate",
-            what_was_delivered="GEN-014 hazard halt spoken via Rime",
+            what_agent_thought="Synthesizing audio for previous question...",
+            what_user_heard="Synthesizing audio— [INTERRUPTED] Interruption detected.",
+            what_was_invalidated="GEN-013 previous query synthesis",
+            what_was_rejected="GEN-013 delayed tool response",
+            what_was_delivered="GEN-014 holding directive spoken via Rime",
             evidence_type="BASELINE DEMO FIXTURE"
         )
     yield
@@ -175,6 +367,10 @@ async def get_status():
         "state": fence.state.value,
         "generationId": fence.current_generation_id,
         "invalidatedGenerations": list(fence.invalidated_generations),
+        "keys": {
+            "gemini": "configured" if bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")) else "missing",
+            "rime": "configured" if bool(os.environ.get("RIME_API_KEY")) else "missing",
+        },
         "rime": rime_cfg.model_dump(),
         "livekit": {
             "configured": token_service.is_configured,
@@ -202,14 +398,26 @@ async def start_session(body: Dict[str, Any] = Body(default={})):
         "generationId": fence.current_generation_id
     }
 
+# Safe in-memory audio cache for non-dynamic responses
+_tts_audio_cache: Dict[str, bytes] = {}
+
 @app.post("/api/session/interrupt")
 async def trigger_interruption(body: Dict[str, Any] = Body(default={})):
     """
     Triggers an immediate user interruption on the active generation:
     Halts active speech, flushes queue, invalidates generation, advances generation.
     """
-    utterance = body.get("utterance", "Stop. Hazard detected.")
+    utterance = body.get("utterance", "Stop. User interrupted.")
     prev_gen, new_gen = fence.trigger_interruption(user_utterance=utterance)
+
+    # Deterministic recovery exit path: once audio is flushed and new generation is ready,
+    # transition from RECOVERING to LISTENING so the app never remains permanently stuck.
+    async def settle_recovery(gen_id: str):
+        await asyncio.sleep(0.15)
+        if fence.state == VoiceState.RECOVERING and fence.current_generation_id == gen_id:
+            fence.resume_listening_after_recovery(source="generation_fence")
+    asyncio.create_task(settle_recovery(new_gen))
+
     return {
         "action": "INTERRUPTION_EXECUTED",
         "previousGeneration": prev_gen,
@@ -217,6 +425,17 @@ async def trigger_interruption(body: Dict[str, Any] = Body(default={})):
         "state": fence.state.value,
         "audioQueue": "FLUSHED",
         "latencyMs": fence.metrics.measuredInterruptToAudioStopMs
+    }
+
+@app.post("/api/session/recover")
+async def recover_session():
+    """Deterministic exit path from RECOVERING to LISTENING without requiring artificial phrases."""
+    if fence.state == VoiceState.RECOVERING:
+        fence.resume_listening_after_recovery(source="session_api")
+    return {
+        "status": "RECOVERED",
+        "state": fence.state.value,
+        "generationId": fence.current_generation_id
     }
 
 @app.post("/api/session/speak")
@@ -255,34 +474,46 @@ async def deliver_speech(body: Dict[str, Any] = Body(...)):
         "provider": provider
     }
 
-# Persistent HTTP client with connection pooling
-persistent_http_client: Optional[httpx.AsyncClient] = None
-
-def get_http_client() -> httpx.AsyncClient:
-    global persistent_http_client
-    if persistent_http_client is None or persistent_http_client.is_closed:
-        persistent_http_client = httpx.AsyncClient(
-            timeout=12.0,
-            limits=httpx.Limits(max_keepalive_connections=15, max_connections=30)
-        )
-    return persistent_http_client
-
 @app.get("/api/tts/audio")
 async def get_tts_audio(
     text: str = Query(...),
     model: Optional[str] = Query(None),
     speaker: Optional[str] = Query(None),
+    generationId: Optional[str] = Query(None),
 ):
     """Synthesizes real audio directly using Rime TTS REST API with user API key and persistent connection pooling."""
+    # PRE-SYNTHESIS GENERATION FENCE CHECK
+    if generationId and (generationId != fence.current_generation_id or generationId in fence.invalidated_generations):
+        fence.recorder.record(
+            event_type=EventType.STALE_RESULT_REJECTED,
+            generation_id=generationId,
+            source="generation_fence",
+            severity=EventSeverity.CRITICAL,
+            payload={
+                "reason": f"Rime TTS request for stale generation {generationId} rejected before synthesis. Current is {fence.current_generation_id}."
+            }
+        )
+        return JSONResponse(status_code=410, content={"error": "STALE_GENERATION", "generationId": generationId})
+
     client = get_http_client()
     key = os.environ.get("RIME_API_KEY", rime_api_key)
-    selected_model = model or active_rime_model or "coda"
-    if "mist" in selected_model:
-        selected_model = "mistv3"
-    elif "coda" in selected_model:
-        selected_model = "coda"
-    
-    selected_speaker = speaker or active_rime_speaker or "celeste"
+    raw_model = model or active_rime_model or "coda"
+    selected_model = "mistv3" if "mist" in raw_model else "coda"
+    raw_speaker = speaker or active_rime_speaker or "celeste"
+
+    # Enforce verified model/speaker catalog pairing to prevent 400 Bad Request
+    if selected_model == "mistv3":
+        selected_speaker = raw_speaker if raw_speaker in ["astra", "cove"] else "astra"
+    else:
+        selected_speaker = raw_speaker if raw_speaker in ["celeste", "astra"] else "celeste"
+
+    cache_key = f"{selected_model}:{selected_speaker}:{text}"
+    is_weather = any(w in text.lower() for w in ["degree", "celsius", "humidity", "weather", "temperature"])
+    # Return from memory cache if safe (do not cache dynamic real-time weather)
+    if not is_weather and cache_key in _tts_audio_cache:
+        cached_content = _tts_audio_cache[cache_key]
+        fence.metrics.rimeTtfbMs = 1.0
+        return Response(content=cached_content, media_type="audio/mpeg")
 
     url = "https://users.rime.ai/v1/rime-tts"
     headers = {
@@ -303,19 +534,38 @@ async def get_tts_audio(
         fence.metrics.rimeTtfbMs = ttfb_ms
         
         if resp.status_code == 200:
+            content = resp.content
+
+            # POST-SYNTHESIS GENERATION FENCE CHECK:
+            # If user interrupted while Rime was synthesizing, block this audio from reaching the browser!
+            if generationId and (generationId != fence.current_generation_id or generationId in fence.invalidated_generations):
+                fence.recorder.record(
+                    event_type=EventType.STALE_RESULT_REJECTED,
+                    generation_id=generationId,
+                    source="generation_fence",
+                    severity=EventSeverity.CRITICAL,
+                    payload={
+                        "reason": f"Rime TTS synthesis for stale generation {generationId} finished after interruption. Audio strictly dropped."
+                    }
+                )
+                print(f"[EchoGuard Fence] STALE RIME AUDIO BLOCKED for {generationId}. Never delivered!")
+                return JSONResponse(status_code=410, content={"error": "STALE_GENERATION", "generationId": generationId})
+
+            if not is_weather and len(_tts_audio_cache) < 100:
+                _tts_audio_cache[cache_key] = content
             fence.recorder.record(
                 event_type=EventType.RIME_FIRST_AUDIO,
-                generation_id=fence.current_generation_id,
+                generation_id=generationId or fence.current_generation_id,
                 source="rime",
                 severity=EventSeverity.INFO,
                 payload={
                     "ttfb_ms": ttfb_ms,
                     "model": selected_model,
                     "speaker": selected_speaker,
-                    "bytes": len(resp.content)
+                    "bytes": len(content)
                 }
             )
-            return Response(content=resp.content, media_type="audio/mpeg")
+            return Response(content=content, media_type="audio/mpeg")
         else:
             return JSONResponse(status_code=resp.status_code, content={"error": resp.text})
     except Exception as e:
@@ -352,9 +602,11 @@ async def process_user_query(body: Dict[str, Any] = Body(...)):
     Receives user utterance from browser microphone/text, fences the generation,
     invokes Gemini (or domain knowledge), and initiates spoken response.
     """
+    global conversation_history
     query = body.get("query", "")
-    target_gen = fence.current_generation_id
+    target_gen = body.get("generationId") or fence.current_generation_id
 
+    # If fence was in RECOVERING, the user's new utterance seamlessly starts the new generation turn
     fence.set_state(VoiceState.THINKING, source="user", payload={"query": query})
     fence.recorder.record(
         event_type=EventType.USER_SPEECH_ENDED,
@@ -369,37 +621,52 @@ async def process_user_query(body: Dict[str, Any] = Body(...)):
         payload={"target_generation": target_gen}
     )
 
+    context = f"Current generation: {target_gen}"
+    weather_city = extract_weather_query(query)
+    weather_info = None
+    if weather_city:
+        weather_info = await get_live_weather(weather_city)
+        if weather_info:
+            context += (
+                f" | Live Weather Data: {weather_info['city']}, {weather_info.get('country', '')}: "
+                f"{weather_info['temperature_c']}°C, {weather_info['condition']}, "
+                f"humidity {weather_info['humidity']}%, wind {weather_info['wind_kmh']} km/h"
+            )
+
     t_llm_start = time.perf_counter()
-    # Check if Gemini API is available
-    response_text = await get_gemini_response(query, context=f"Current generation: {target_gen}")
+    response_text = await get_gemini_response(query, context=context)
     t_llm_end = time.perf_counter()
     llm_latency_ms = round((t_llm_end - t_llm_start) * 1000.0, 2)
     fence.metrics.llmFirstTokenLatencyMs = llm_latency_ms
 
     if not response_text:
-        # Authoritative conversational response for EchoGuard voice reliability layer
-        q_lower = query.lower()
-        if "who are you" in q_lower or "what are you" in q_lower or "what do you do" in q_lower:
-            response_text = "EchoGuard is a realtime voice reliability layer. It protects voice interactions from stale responses and interruption races by cancelling obsolete speech and ensuring that only the current generation reaches the user."
-        elif "delhi" in q_lower and "weather" in q_lower:
-            response_text = "Delhi is currently around thirty-two degrees Celsius with clear skies and warm temperatures."
-        elif "bangalore" in q_lower and "weather" in q_lower:
-            response_text = "Bangalore is currently pleasant at around twenty-four degrees Celsius with mild breezes and light cloud cover."
-        elif "what is this" in q_lower or "tell me about" in q_lower or "project" in q_lower:
-            response_text = "EchoGuard guarantees zero stale speech leaks during conversational interruptions in voice AI systems."
-        elif "can you hear" in q_lower or "hello" in q_lower or "hi" in q_lower or "hey" in q_lower:
-            response_text = "Hello! I hear you clearly. EchoGuard voice reliability and generation fencing are active."
-        elif "stop" in q_lower or "hazard" in q_lower or "wait" in q_lower:
-            response_text = "Holding position immediately. Current generation invalidated and audio buffer flushed."
-        elif "status" in q_lower or "check" in q_lower:
-            response_text = f"All systems nominal in generation {target_gen} with zero detected stale speech leaks."
-        elif "weather" in q_lower:
-            response_text = "The weather is currently clear with pleasant conditions and good visibility."
-        elif "help" in q_lower:
-            response_text = "You can ask questions, speak naturally, interrupt me at any moment, or inspect the flight recorder."
-        else:
-            response_text = f"Acknowledged '{query}'. EchoGuard generation fence is active and listening."
+        response_text = "I apologize, I am temporarily having trouble reaching the Gemini service. Please check your network connection and try again."
 
+    # STRICT GENERATION FENCE CHECK:
+    # If user interrupted while Gemini was processing, target_gen is now stale and MUST be rejected!
+    if target_gen != fence.current_generation_id or target_gen in fence.invalidated_generations:
+        fence.recorder.record(
+            event_type=EventType.STALE_RESULT_REJECTED,
+            generation_id=target_gen,
+            source="generation_fence",
+            severity=EventSeverity.CRITICAL,
+            payload={
+                "reason": f"Gemini response for {target_gen} arrived after interruption (current is {fence.current_generation_id}). Strictly dropped."
+            }
+        )
+        print(f"[EchoGuard Fence] STALE GEMINI RESULT BLOCKED for {target_gen}. Active is {fence.current_generation_id}. Zero leaks!")
+        return {
+            "status": "FENCED_REJECTED",
+            "generationId": target_gen,
+            "currentGeneration": fence.current_generation_id,
+            "reason": "STALE_GENERATION"
+        }
+
+    # Response is verified fresh and active — persist to conversation memory for follow-ups
+    conversation_history.append({"role": "user", "content": query})
+    conversation_history.append({"role": "assistant", "content": response_text})
+    if len(conversation_history) > 12:
+        conversation_history = conversation_history[-12:]
 
     fence.recorder.record(
         event_type=EventType.LLM_TEXT_READY,
@@ -415,27 +682,18 @@ async def process_user_query(body: Dict[str, Any] = Body(...)):
         payload={"model": active_rime_model}
     )
 
-    import urllib.parse
     encoded_audio_text = urllib.parse.quote(response_text)
 
-    # Validate generation before speaking
-    if target_gen == fence.current_generation_id:
-        return {
-            "status": "SUCCESS",
-            "generationId": target_gen,
-            "response": response_text,
-            "audioUrl": f"/api/tts/audio?text={encoded_audio_text}&model={active_rime_model}",
-            "usedGemini": bool(gemini_api_key),
-            "metrics": {
-                "llmLatencyMs": llm_latency_ms
-            }
+    return {
+        "status": "SUCCESS",
+        "generationId": target_gen,
+        "response": response_text,
+        "audioUrl": f"/api/tts/audio?text={encoded_audio_text}&model={active_rime_model}&generationId={target_gen}",
+        "usedGemini": bool(gemini_api_key),
+        "metrics": {
+            "llmLatencyMs": llm_latency_ms
         }
-    else:
-        return {
-            "status": "FENCED_REJECTED",
-            "generationId": target_gen,
-            "currentGeneration": fence.current_generation_id
-        }
+    }
 
 @app.post("/api/session/playback-start")
 async def session_playback_start(body: Dict[str, Any] = Body(default={})):
@@ -508,7 +766,7 @@ async def export_evidence_json():
 @app.post("/api/config/keys")
 async def update_api_keys(body: Dict[str, Any] = Body(...)):
     """Updates runtime API keys (Gemini, Rime, LiveKit)."""
-    global gemini_api_key
+    global gemini_api_key, gemini_client
     new_gemini = body.get("gemini_api_key")
     new_rime = body.get("rime_api_key")
     new_lk_key = body.get("livekit_api_key")
@@ -518,6 +776,13 @@ async def update_api_keys(body: Dict[str, Any] = Body(...)):
     if new_gemini is not None:
         gemini_api_key = new_gemini.strip()
         os.environ["GEMINI_API_KEY"] = gemini_api_key
+        os.environ["GOOGLE_API_KEY"] = gemini_api_key
+        try:
+            from google import genai
+            gemini_client = genai.Client(api_key=gemini_api_key)
+            print(f"Gemini client successfully re-initialized with new key.")
+        except Exception as _e:
+            print(f"Error re-initializing gemini_client: {_e}")
 
     if new_rime is not None:
         rime_service.api_key = new_rime.strip()

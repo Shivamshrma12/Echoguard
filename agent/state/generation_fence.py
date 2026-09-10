@@ -384,3 +384,33 @@ class GenerationFence:
         
         # Speak the new response
         self.begin_speech(new_response_text, provider=provider)
+
+    def resume_listening_after_recovery(self, source: str = "generation_fence") -> None:
+        """
+        Deterministic exit path from RECOVERING to LISTENING when no immediate
+        recovery speech is queued. Emits RECOVERY_COMPLETED event and restores LISTENING state.
+        """
+        if self._state == VoiceState.RECOVERING:
+            now = time.time()
+            if self._last_interrupt_ts:
+                total_recovery_ms = round((now - self._last_interrupt_ts) * 1000.0, 2)
+                self._metrics.recoveryLatencyMs = total_recovery_ms
+                if self._metrics.avgRecoveryTimeMs == 0.0:
+                    self._metrics.avgRecoveryTimeMs = total_recovery_ms
+                else:
+                    self._metrics.avgRecoveryTimeMs = round(
+                        (self._metrics.avgRecoveryTimeMs + total_recovery_ms) / 2.0, 2
+                    )
+            self._metrics.recoverySuccessCount += 1
+            self.set_state(VoiceState.LISTENING, source=source, payload={"ready_generation": self._current_gen_id})
+            self.recorder.record(
+                event_type=EventType.RECOVERY_COMPLETED,
+                generation_id=self._current_gen_id,
+                source=source,
+                severity=EventSeverity.RECOVERY,
+                payload={
+                    "active_generation": self._current_gen_id,
+                    "resolution": "READY_FOR_INPUT",
+                    "recovery_duration_ms": self._metrics.recoveryLatencyMs
+                }
+            )

@@ -23,6 +23,12 @@ export function App() {
     voiceStateRef.current = voiceState;
   }, [voiceState]);
   const [generationId, setGenerationId] = useState<string>('GEN-001');
+  const generationIdRef = useRef<string>(generationId);
+  const invalidatedGenerationsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    generationIdRef.current = generationId;
+    audioManager.setGeneration(generationId);
+  }, [generationId]);
   const [metrics, setMetrics] = useState<SystemMetrics>({
     interruptsHandled: 1,
     staleResultsBlocked: 1,
@@ -52,6 +58,7 @@ export function App() {
   const [isMicActive, setIsMicActive] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [activeSpeechText, setActiveSpeechText] = useState<string>('');
+  const [userInterimText, setUserInterimText] = useState<string>('');
   const [events, setEvents] = useState<VoiceEvent[]>([]);
   const [incidents, setIncidents] = useState<IncidentRecord[]>([]);
   const [selectedIncident, setSelectedIncident] = useState<IncidentRecord | null>(null);
@@ -118,7 +125,15 @@ export function App() {
             if (msg.events) setEvents(msg.events);
           } else if (msg.type === 'EVENT') {
             setEvents((prev) => [...prev.slice(-30), msg.event]);
-            if (msg.state) setVoiceState(msg.state);
+            if (msg.state) {
+              setVoiceState(msg.state);
+              if (msg.state === 'RECOVERING') {
+                // Double safety net: ensure UI never gets stuck in RECOVERING
+                setTimeout(() => {
+                  setVoiceState((curr) => (curr === 'RECOVERING' ? 'LISTENING' : curr));
+                }, 250);
+              }
+            }
             if (msg.generationId) setGenerationId(msg.generationId);
             if (msg.metrics) setMetrics(msg.metrics);
 
@@ -137,53 +152,84 @@ export function App() {
     }
   };
 
-  // Automatic Barge-In Handler (Triggered seamlessly on speech onset/VAD without clicking any button)
-  const handleAutomaticBargeIn = async () => {
-    // 1. Instantly silence Rime audio playback in 0ms without erasing user's incoming utterance
+  // Helper: separate leading interruption phrases from trailing user follow-up questions
+  const parseUserUtterance = (rawText: string): { isInterruptionOnly: boolean; cleanedQuery: string } => {
+    const text = rawText.trim();
+    const interruptPrefixRegex = /^(no\s*,?\s*stop|no|stop|wait|hold\s+on|cancel|pause|quiet|shut\s+up|hey|listen|please\s+stop)[\s,.:;!?-]*/i;
+    const match = text.match(interruptPrefixRegex);
+    if (!match) {
+      return { isInterruptionOnly: false, cleanedQuery: text };
+    }
+    const remainder = text.slice(match[0].length).trim();
+    if (!remainder) {
+      return { isInterruptionOnly: true, cleanedQuery: '' };
+    }
+    return { isInterruptionOnly: false, cleanedQuery: remainder };
+  };
+
+  // Automatic Barge-In Handler (Triggered when user speaks during playback or thinking)
+  const handleAutomaticBargeIn = async (interruptedUtterance?: string) => {
+    // 1. Instantly silence Rime audio playback (0ms acoustic cutoff)
     audioManager.flushAudioOnly();
+    const staleGen = generationIdRef.current;
+    invalidatedGenerationsRef.current.add(staleGen);
+    audioManager.invalidateGeneration(staleGen);
+
     setActiveSpeechText('');
-    setVoiceState('LISTENING');
+    setVoiceState('INTERRUPTING');
 
     // 2. Invalidate obsolete generation on server fence immediately
     try {
       const res = await fetch('/api/session/interrupt', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ utterance: 'Automatic speech barge-in' }),
+        body: JSON.stringify({ utterance: interruptedUtterance || 'User voice barge-in' }),
       });
       if (res.ok) {
         const data = await res.json();
-        setGenerationId(data.newGeneration);
+        const newGen = data.newGeneration;
+        setGenerationId(newGen);
+        generationIdRef.current = newGen;
+        audioManager.setGeneration(newGen);
+        setVoiceState('LISTENING');
         fetchIncidents();
       }
     } catch (err) {
       console.error('Barge-in fence invalidation notice:', err);
+      setVoiceState('LISTENING');
     }
   };
 
-  // Start Live Session with real speech recognition
+  // Start Live Session with continuous speech recognition
   const handleStartSession = async () => {
     const micGranted = await audioManager.startMicrophone();
     setIsMicActive(micGranted);
     setIsSessionActive(true);
     setVoiceState('LISTENING');
 
-    // Start browser speech recognition with continuous listening and automatic barge-in
     audioManager.startListening(
       (transcript) => {
+        setUserInterimText('');
         handleUserSpeechQuery(transcript);
       },
       () => {
-        // Speech onset: if agent is currently speaking, barge-in automatically!
-        if (voiceStateRef.current === 'SPEAKING' || audioManager.isSpeaking) {
-          handleAutomaticBargeIn();
-        } else {
+        // Speech onset: if agent is THINKING, user speech triggers barge-in on the in-flight query
+        if (voiceStateRef.current === 'THINKING') {
+          handleAutomaticBargeIn('User speech during thinking');
+        } else if (voiceStateRef.current !== 'SPEAKING') {
           setVoiceState('LISTENING');
         }
       },
-      () => {
-        // Acoustic VAD triggered barge-in during Rime speech
-        handleAutomaticBargeIn();
+      (interruptedUtterance) => {
+        setUserInterimText('');
+        // Automatic barge-in triggered while agent audio is playing
+        handleAutomaticBargeIn(interruptedUtterance);
+      },
+      (err) => {
+        console.warn('Speech recognition notice:', err);
+      },
+      (interim) => {
+        setUserInterimText(interim);
       }
     );
 
@@ -208,11 +254,16 @@ export function App() {
     setIsSessionActive(false);
     setVoiceState('IDLE');
     setActiveSpeechText('');
+    setUserInterimText('');
   };
 
-  // Real Interruption Trigger (Cuts audio immediately with 0ms delay!)
+  // Manual Interruption Trigger (Deterministic Chaos Lab / UI Control)
   const handleInterrupt = async (customUtterance?: string) => {
-    audioManager.flushAudio(); // Instant acoustic silence (0ms cutoff)
+    audioManager.flushAudio(); // Instant acoustic silence
+    const staleGen = generationIdRef.current;
+    invalidatedGenerationsRef.current.add(staleGen);
+    audioManager.invalidateGeneration(staleGen);
+
     setVoiceState('INTERRUPTING');
     setActiveSpeechText('');
 
@@ -220,16 +271,16 @@ export function App() {
       const res = await fetch('/api/session/interrupt', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ utterance: customUtterance || 'User interrupted' }),
+        body: JSON.stringify({ utterance: customUtterance || 'User manual interrupt' }),
       });
       if (res.ok) {
         const data = await res.json();
-        setVoiceState('RECOVERING');
-        setGenerationId(data.newGeneration);
-        fetchIncidents(); // Run incident fetch in background without blocking audio/UI
-        setTimeout(() => {
-          setVoiceState('LISTENING');
-        }, 100);
+        const newGen = data.newGeneration;
+        setGenerationId(newGen);
+        generationIdRef.current = newGen;
+        audioManager.setGeneration(newGen);
+        setVoiceState('LISTENING');
+        fetchIncidents();
       }
     } catch (err) {
       console.error('Interruption error:', err);
@@ -237,41 +288,68 @@ export function App() {
     }
   };
 
-  // Process user utterance via Gemini / Server
+  // Process user utterance via Gemini / Server with generation fencing
   const handleUserSpeechQuery = async (queryText: string) => {
     if (!queryText.trim()) return;
+
+    // Check if utterance is purely an explicit interruption phrase with no follow-up question
+    const parsed = parseUserUtterance(queryText);
+    if (parsed.isInterruptionOnly) {
+      console.log('[EchoGuard] Utterance was purely an interruption command. Acknowledged.');
+      setVoiceState('LISTENING');
+      return;
+    }
+
+    const actualQuery = parsed.cleanedQuery;
+    const currentGen = generationIdRef.current;
 
     setVoiceState('THINKING');
     try {
       const res = await fetch('/api/chat/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: queryText }),
+        body: JSON.stringify({ query: actualQuery, generationId: currentGen }),
       });
       if (res.ok) {
         const data = await res.json();
+        // GENERATION FENCE CHECK: verify generation is still active and valid
+        if (
+          data.status === 'FENCED_REJECTED' ||
+          data.generationId !== generationIdRef.current ||
+          invalidatedGenerationsRef.current.has(data.generationId)
+        ) {
+          console.warn(`[EchoGuard Fence] Stale result rejected for ${data.generationId}. Active generation is ${generationIdRef.current}`);
+          setVoiceState('LISTENING');
+          return;
+        }
+
         if (data.status === 'SUCCESS') {
           setActiveSpeechText(data.response);
-          // Keep state as THINKING until physical audio begins playing
-          // Speak aloud through computer speakers using Rime TTS
+          // Speak aloud through computer speakers using Rime TTS under verified generation
           audioManager.speak(
             data.response,
+            data.generationId,
             () => {
               // Physical speaker output has started
               setVoiceState('SPEAKING');
-              fetch('/api/session/playback-start', { method: 'POST' }).catch(() => {});
+              fetch('/api/session/playback-start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ generationId: data.generationId, text: data.response })
+              }).catch(() => {});
             },
             () => {
               // Playback ended normally
-              fetch('/api/session/playback-end', { method: 'POST' }).catch(() => {});
+              fetch('/api/session/playback-end', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ generationId: data.generationId })
+              }).catch(() => {});
               setVoiceState('LISTENING');
               setActiveSpeechText('');
               fetchStatus();
             }
           );
-        } else if (data.status === 'FENCED_REJECTED') {
-          console.warn('Stale result rejected by generation fence');
-          setVoiceState('LISTENING');
         }
       } else {
         setVoiceState('LISTENING');
@@ -285,7 +363,7 @@ export function App() {
   // Run Showcase Interruption Test
   const handleRunShowcaseTest = async () => {
     // 1. Speak initial Gen 1 advice
-    const initialSpeech = 'Continue toward the next crossing. The path ahead appears clear...';
+    const initialSpeech = 'EchoGuard is actively monitoring speech generation fences to prevent stale audio packets...';
     setActiveSpeechText(initialSpeech);
     setVoiceState('SPEAKING');
 
@@ -310,7 +388,7 @@ export function App() {
           }
 
           // Speak recovery response
-          const recoverySpeech = 'Stop. Vehicle approaching. Wait until the crossing is clear.';
+          const recoverySpeech = 'Interruption verified. Previous generation invalidated and audio buffer flushed.';
           setActiveSpeechText(recoverySpeech);
           setVoiceState('SPEAKING');
           audioManager.speak(
@@ -417,6 +495,7 @@ export function App() {
               isSessionActive={isSessionActive}
               isMicActive={isMicActive}
               activeSpeechText={activeSpeechText}
+              userInterimText={userInterimText}
               events={events}
               incidents={incidents}
               onStartSession={handleStartSession}

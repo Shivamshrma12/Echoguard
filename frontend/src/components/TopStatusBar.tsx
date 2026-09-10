@@ -141,7 +141,7 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
               </div>
               <div className="flex justify-between p-2 rounded bg-black/30">
                 <span className="text-slate-400">Transport:</span>
-                <span className="text-white">{rimeConfig.transport} (LiveKit Plugin)</span>
+                <span className="text-white">Direct Rime Stream (HTTP/REST + WebSocket)</span>
               </div>
             </div>
             <div className="flex justify-end pt-2">

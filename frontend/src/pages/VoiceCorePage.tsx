@@ -30,6 +30,7 @@ interface VoiceCorePageProps {
   isSessionActive: boolean;
   isMicActive: boolean;
   activeSpeechText: string;
+  userInterimText?: string;
   events: VoiceEvent[];
   incidents: IncidentRecord[];
   onStartSession: () => void;
@@ -52,6 +53,7 @@ export const VoiceCorePage: React.FC<VoiceCorePageProps> = ({
   isSessionActive,
   isMicActive,
   activeSpeechText,
+  userInterimText = '',
   events,
   incidents,
   onStartSession,
@@ -419,9 +421,20 @@ export const VoiceCorePage: React.FC<VoiceCorePageProps> = ({
             <h2 className="text-base font-bold text-white tracking-wide">
               {listeningStatusText}
             </h2>
-            <p className="text-xs text-slate-400 mt-0.5">
-              Speak naturally. Interrupt anytime.
-            </p>
+            {userInterimText ? (
+              <div className="mt-2 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-xs font-medium flex items-center gap-2 animate-pulse">
+                <span className="w-2 h-2 rounded-full bg-cyan-400 shadow-[0_0_8px_rgba(6,182,212,0.8)]" />
+                <span>Hearing: "{userInterimText}"</span>
+              </div>
+            ) : state === 'SPEAKING' && activeSpeechText ? (
+              <div className="mt-2 max-w-lg px-3 py-1.5 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-200 text-xs text-center line-clamp-2">
+                "{activeSpeechText}"
+              </div>
+            ) : (
+              <p className="text-xs text-slate-400 mt-0.5">
+                Speak naturally. Interrupt anytime.
+              </p>
+            )}
 
             {/* Horizontal Waveform Canvas spanning across card */}
             <div className="w-full max-w-xl h-14 mt-4 relative flex items-center justify-center">
@@ -443,7 +456,7 @@ export const VoiceCorePage: React.FC<VoiceCorePageProps> = ({
                   ? 'bg-blue-600 hover:bg-blue-500 border-blue-400 text-white shadow-[0_0_20px_rgba(37,99,235,0.4)]'
                   : 'bg-[#101b33] hover:bg-[#17274a] border-white/[0.12] text-white'
               }`}
-              title={state === 'SPEAKING' ? 'Click to Interrupt (0ms Cutoff)' : isSessionActive ? 'Click to End' : 'Click to Speak'}
+              title={state === 'SPEAKING' ? 'Click to Interrupt (Immediate Cutoff)' : isSessionActive ? 'Click to End' : 'Click to Speak'}
             >
               <Mic className="w-5 h-5 text-white" />
             </button>
@@ -471,7 +484,7 @@ export const VoiceCorePage: React.FC<VoiceCorePageProps> = ({
                     onClick={onInterrupt}
                     className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs font-bold flex items-center gap-1 cursor-pointer animate-pulse"
                   >
-                    <span>Interrupt!</span>
+                    <span>Immediate Cutoff</span>
                   </button>
                 )}
               </div>
@@ -479,22 +492,22 @@ export const VoiceCorePage: React.FC<VoiceCorePageProps> = ({
               {/* Quick Prompt Chips */}
               <div className="flex flex-wrap items-center justify-center gap-1.5 text-[10px]">
                 <button
-                  onClick={() => handleSendQuickPrompt('Check current system status and path clearance.')}
+                  onClick={() => handleSendQuickPrompt('What is the weather in Delhi?')}
                   className="px-2.5 py-1 rounded-full bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
                 >
-                  "Check current status"
+                  "Weather in Delhi"
                 </button>
                 <button
-                  onClick={() => handleSendQuickPrompt('Tell me if I can proceed to crossing.')}
+                  onClick={() => handleSendQuickPrompt('Explain how generation fencing works.')}
                   className="px-2.5 py-1 rounded-full bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
                 >
-                  "Can I proceed?"
+                  "Explain fencing"
                 </button>
                 <button
                   onClick={onInterrupt}
                   className="px-2.5 py-1 rounded-full bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-300 transition-colors cursor-pointer font-semibold"
                 >
-                  ⚡ Test Interruption Cutoff
+                  ⚡ Test Immediate Cutoff
                 </button>
               </div>
 
@@ -529,7 +542,7 @@ export const VoiceCorePage: React.FC<VoiceCorePageProps> = ({
                 </div>
                 <span className="text-slate-600">|</span>
                 <div className="flex flex-col items-center">
-                  <span className="text-slate-400">0ms Cutoff</span>
+                  <span className="text-slate-400">Immediate Cutoff</span>
                   <span className="text-red-300 font-bold mt-0.5">
                     {metrics.measuredInterruptToAudioStopMs ? `${metrics.measuredInterruptToAudioStopMs}ms` : '0ms'}
                   </span>
@@ -810,11 +823,11 @@ export const VoiceCorePage: React.FC<VoiceCorePageProps> = ({
               <div className="flex items-center justify-between py-1 hover:bg-white/[0.02] px-1 rounded transition-colors">
                 <div className="flex items-center gap-2 text-slate-300 text-[11px]">
                   <Info className="w-3.5 h-3.5 text-slate-500" />
-                  <span>LiveKit</span>
+                  <span>Transport</span>
                 </div>
-                <span className={`font-semibold flex items-center gap-1.5 text-[11px] ${livekitConfigured ? 'text-emerald-400' : 'text-amber-400'}`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${livekitConfigured ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]' : 'bg-amber-400'}`} />
-                  {livekitConfigured ? 'Connected' : 'Demo Mode (Simulated)'}
+                <span className="font-semibold flex items-center gap-1.5 text-[11px] text-emerald-400">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]" />
+                  Direct Rime Audio Stream
                 </span>
               </div>
 
